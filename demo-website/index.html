@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Phoenix Engine 演示中心 - 探索强大的实时渲染能力与图形技术">
+  <meta name="keywords" content="Phoenix Engine, 游戏引擎，渲染，WebGL, WASM, 图形，3D">
+  <meta name="author" content="Phoenix Engine Team">
+  <meta name="theme-color" content="#ff6b35">
+  
+  <!-- Open Graph / Social Sharing -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Phoenix Engine 演示中心">
+  <meta property="og:description" content="探索 Phoenix Engine 的强大渲染能力与实时图形技术">
+  <meta property="og:image" content="assets/og-image.png">
+  <meta property="og:url" content="https://phoenix-engine.com/showcase">
+  
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Phoenix Engine 演示中心">
+  <meta name="twitter:description" content="探索 Phoenix Engine 的强大渲染能力与实时图形技术">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦅</text></svg>">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/showcase.css">
+  <link rel="stylesheet" href="css/responsive.css">
+  
+  <title>Phoenix Engine 演示中心</title>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <h1>🦅 Phoenix Engine 演示中心</h1>
+    <p>探索 Phoenix Engine 的强大渲染能力与实时图形技术</p>
+  </header>
+
+  <!-- Search & Filter Section -->
+  <section class="search-section">
+    <div class="search-container">
+      <input 
+        type="text" 
+        id="searchInput" 
+        class="search-input" 
+        placeholder="🔍 搜索演示..."
+        aria-label="搜索演示"
+      >
+      <div class="filter-buttons" role="group" aria-label="演示筛选">
+        <button class="filter-btn active" data-filter="all">全部</button>
+        <button class="filter-btn" data-filter="materials">🎨 材质</button>
+        <button class="filter-btn" data-filter="lighting">💡 光照</button>
+        <button class="filter-btn" data-filter="animation">🎭 动画</button>
+        <button class="filter-btn" data-filter="effects">✨ 特效</button>
+        <button class="filter-btn" data-filter="performance">⚡ 性能</button>
+      </div>
+    </div>
+    <div id="showcaseStats" class="showcase-stats" style="margin-top: 1rem; text-align: center; color: #b8b8b8; font-size: 0.9rem;">
+      <!-- Stats will be populated by JS -->
+    </div>
+  </section>
+
+  <!-- Demo Grid -->
+  <main class="demo-grid" id="demoGrid">
+    <!-- Loading state -->
+    <div class="loading">
+      <div class="spinner"></div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>© 2026 Phoenix Engine. All rights reserved.</p>
+    <div class="footer-links">
+      <a href="https://phoenix-engine.com" target="_blank" rel="noopener">官方网站</a>
+      <a href="https://github.com/phoenix-engine" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://docs.phoenix-engine.com" target="_blank" rel="noopener">文档</a>
+      <a href="mailto:contact@phoenix-engine.com">联系我们</a>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="js/showcase.js" defer></script>
+  <script src="js/player.js" defer></script>
+  
+  <!-- Structured Data for SEO -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Phoenix Engine Demo Showcase",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Web",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "description": "Interactive demos showcasing Phoenix Engine's real-time rendering capabilities",
+    "screenshot": "assets/screenshot.png"
+  }
+  </script>
+</body>
+</html>

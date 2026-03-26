@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Phoenix Engine Demo - Interactive showcase">
+  <meta name="theme-color" content="#ff6b35">
+  
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Phoenix Engine Demo">
+  <meta property="og:description" content="Interactive demo showcase">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦅</text></svg>">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="../css/showcase.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+  
+  <style>
+    .demo-page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .demo-nav {
+      background: var(--card-bg);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .demo-nav a {
+      color: var(--accent-color);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: color var(--transition-speed);
+    }
+
+    .demo-nav a:hover {
+      color: var(--primary-color);
+    }
+
+    .demo-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .canvas-container {
+      flex: 1;
+      position: relative;
+      background: #0a0a15;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #phoenixCanvas {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+    }
+
+    .demo-info-panel {
+      background: var(--card-bg);
+      padding: 1.5rem 2rem;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .demo-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .demo-title-section h1 {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+      color: var(--text-primary);
+    }
+
+    .demo-title-section p {
+      color: var(--text-secondary);
+      font-size: 1rem;
+    }
+
+    .demo-controls {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .control-btn {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      background: var(--dark-bg);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all var(--transition-speed);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.9rem;
+    }
+
+    .control-btn:hover {
+      background: var(--primary-color);
+      transform: translateY(-2px);
+    }
+
+    .stats-bar {
+      display: flex;
+      gap: 2rem;
+      padding: 1rem 0;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-value {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--primary-color);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+
+    .feature-card {
+      background: var(--dark-bg);
+      padding: 1rem;
+      border-radius: 8px;
+      border-left: 3px solid var(--accent-color);
+    }
+
+    .feature-card h4 {
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      color: var(--text-primary);
+    }
+
+    .feature-card p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(26, 26, 46, 0.95);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .loading-overlay.hidden {
+      display: none;
+    }
+
+    .loading-overlay h3 {
+      margin-top: 1rem;
+      color: var(--text-primary);
+    }
+
+    .progress-bar {
+      width: 200px;
+      height: 4px;
+      background: var(--dark-bg);
+      border-radius: 2px;
+      margin-top: 1rem;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    @media (max-width: 768px) {
+      .demo-nav {
+        padding: 0.75rem 1rem;
+      }
+
+      .demo-info-panel {
+        padding: 1rem;
+      }
+
+      .demo-header {
+        flex-direction: column;
+      }
+
+      .stats-bar {
+        gap: 1rem;
+      }
+
+      .stat-value {
+        font-size: 1rem;
+      }
+    }
+  </style>
+  
+  <title id="demoTitle">Phoenix Engine Demo</title>
+</head>
+<body>
+  <div class="demo-page">
+    <!-- Navigation -->
+    <nav class="demo-nav">
+      <a href="index.html">
+        ← 返回演示中心
+      </a>
+      <div style="display: flex; gap: 1rem; align-items: center;">
+        <span id="demoVersion" style="color: var(--text-secondary); font-size: 0.85rem;">v1.0.0</span>
+      </div>
+    </nav>
+
+    <!-- Demo Container -->
+    <div class="demo-container">
+      <!-- Canvas Area -->
+      <div class="canvas-container">
+        <canvas id="phoenixCanvas"></canvas>
+        
+        <!-- Loading Overlay -->
+        <div class="loading-overlay" id="loadingOverlay">
+          <div class="spinner"></div>
+          <h3 id="loadingText">加载演示中...</h3>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Info Panel -->
+      <div class="demo-info-panel">
+        <div class="demo-header">
+          <div class="demo-title-section">
+            <h1 id="demoName">演示名称</h1>
+            <p id="demoDescription">演示描述</p>
+          </div>
+          <div class="demo-controls">
+            <button class="control-btn" id="btnPause" onclick="togglePause()">
+              ⏸️ 暂停
+            </button>
+            <button class="control-btn" id="btnFullscreen" onclick="toggleFullscreen()">
+              ⛶ 全屏
+            </button>
+            <button class="control-btn" onclick="captureScreenshot()">
+              📷 截图
+            </button>
+            <button class="control-btn" onclick="shareDemo()">
+              📤 分享
+            </button>
+          </div>
+        </div>
+
+        <!-- Performance Stats -->
+        <div class="stats-bar">
+          <div class="stat">
+            <span class="stat-label">FPS</span>
+            <span class="stat-value" id="fpsDisplay">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">绘制调用</span>
+            <span class="stat-value" id="drawCallsDisplay">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">顶点数</span>
+            <span class="stat-value" id="verticesDisplay">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">三角形</span>
+            <span class="stat-value" id="trianglesDisplay">0</span>
+          </div>
+        </div>
+
+        <!-- Technical Features -->
+        <div class="features-grid" id="featuresGrid">
+          <!-- Features will be populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="../js/player.js"></script>
+  <script>
+    // Demo configuration - will be overridden by individual demos
+    const demoConfig = {
+      id: 'template',
+      title: '演示模板',
+      description: '这是一个演示页面模板',
+      version: '1.0.0',
+      features: []
+    };
+
+    let player = null;
+    let isPaused = false;
+
+    // Initialize demo
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Load demo-specific config if available
+      await loadDemoConfig();
+      
+      // Initialize player
+      player = new PhoenixPlayer('phoenixCanvas', {
+        width: 1920,
+        height: 1080,
+        antialias: true
+      });
+
+      // Update UI with demo info
+      updateDemoUI();
+
+      // Load and start demo
+      await initializeDemo();
+    });
+
+    async function loadDemoConfig() {
+      try {
+        const response = await fetch('config.json');
+        if (response.ok) {
+          const config = await response.json();
+          Object.assign(demoConfig, config);
+        }
+      } catch (e) {
+        console.log('Using default demo config');
+      }
+    }
+
+    function updateDemoUI() {
+      document.getElementById('demoTitle').textContent = `${demoConfig.title} - Phoenix Engine`;
+      document.getElementById('demoName').textContent = demoConfig.title;
+      document.getElementById('demoDescription').textContent = demoConfig.description;
+      document.getElementById('demoVersion').textContent = `v${demoConfig.version}`;
+
+      // Populate features
+      const featuresGrid = document.getElementById('featuresGrid');
+      if (demoConfig.features && demoConfig.features.length > 0) {
+        featuresGrid.innerHTML = demoConfig.features.map(feature => `
+          <div class="feature-card">
+            <h4>✓ ${feature}</h4>
+            <p>Phoenix Engine 核心技术</p>
+          </div>
+        `).join('');
+      }
+    }
+
+    async function initializeDemo() {
+      const overlay = document.getElementById('loadingOverlay');
+      const progressFill = document.getElementById('progressFill');
+      const loadingText = document.getElementById('loadingText');
+
+      // Simulate loading progress
+      const steps = [
+        '初始化引擎...',
+        '加载资源...',
+        '编译着色器...',
+        '准备场景...',
+        '启动渲染...'
+      ];
+
+      for (let i = 0; i < steps.length; i++) {
+        loadingText.textContent = steps[i];
+        progressFill.style.width = `${((i + 1) / steps.length) * 100}%`;
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
+      // Load demo
+      await player.loadDemo(demoConfig);
+
+      // Hide loading overlay
+      setTimeout(() => {
+        overlay.classList.add('hidden');
+      }, 500);
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      const btn = document.getElementById('btnPause');
+      
+      if (isPaused) {
+        player.pause();
+        btn.textContent = '▶️ 继续';
+      } else {
+        player.resume();
+        btn.textContent = '⏸️ 暂停';
+      }
+    }
+
+    function toggleFullscreen() {
+      const btn = document.getElementById('btnFullscreen');
+      
+      if (!document.fullscreenElement) {
+        player.setFullscreen();
+        btn.textContent = '⛶ 退出全屏';
+      } else {
+        player.exitFullscreen();
+        btn.textContent = '⛶ 全屏';
+      }
+    }
+
+    function captureScreenshot() {
+      const screenshot = player.captureScreenshot();
+      if (screenshot) {
+        const link = document.createElement('a');
+        link.download = `phoenix-${demoConfig.id}-${Date.now()}.png`;
+        link.href = screenshot;
+        link.click();
+      }
+    }
+
+    async function shareDemo() {
+      const shareData = {
+        title: demoConfig.title,
+        text: demoConfig.description,
+        url: window.location.href
+      };
+
+      if (navigator.share) {
+        try {
+          await navigator.share(shareData);
+        } catch (err) {
+          console.log('Share cancelled');
+        }
+      } else {
+        try {
+          await navigator.clipboard.writeText(shareData.url);
+          alert('链接已复制到剪贴板！');
+        } catch (err) {
+          console.error('Failed to copy:', err);
+        }
+      }
+    }
+
+    // Handle fullscreen change
+    document.addEventListener('fullscreenchange', () => {
+      const btn = document.getElementById('btnFullscreen');
+      if (!document.fullscreenElement) {
+        btn.textContent = '⛶ 全屏';
+      }
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      switch(e.key) {
+        case ' ':
+          e.preventDefault();
+          togglePause();
+          break;
+        case 'f':
+        case 'F':
+          toggleFullscreen();
+          break;
+        case 's':
+        case 'S':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            captureScreenshot();
+          }
+          break;
+        case 'Escape':
+          if (document.fullscreenElement) {
+            player.exitFullscreen();
+          }
+          break;
+      }
+    });
+  </script>
+</body>
+</html>

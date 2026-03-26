@@ -1,0 +1,142 @@
+{
+  "showcase": {
+    "title": "Phoenix Engine 演示中心",
+    "description": "探索 Phoenix Engine 的强大渲染能力与实时图形技术",
+    "version": "1.0.0",
+    "lastUpdated": "2026-03-26"
+  },
+  "demos": [
+    {
+      "id": "pbr-materials",
+      "title": "PBR 材质展示",
+      "description": "基于物理的渲染材质系统，展示金属、塑料、木材、石材等多种真实材质效果",
+      "category": "materials",
+      "thumbnail": "demos/pbr-materials/thumbnail.jpg",
+      "demoUrl": "demos/pbr-materials/index.html",
+      "featured": true,
+      "popularity": 95,
+      "tags": ["PBR", "材质", "渲染"],
+      "techSpecs": {
+        "drawCalls": 24,
+        "vertices": 48000,
+        "textures": 12,
+        "shaderVariants": 8
+      },
+      "features": [
+        "金属度工作流",
+        "粗糙度映射",
+        "法线贴图",
+        "环境光遮蔽",
+        "菲涅尔效果"
+      ]
+    },
+    {
+      "id": "lighting",
+      "title": "光影效果",
+      "description": "实时阴影系统，支持 CSM 级联阴影映射和 VSM 方差阴影映射技术",
+      "category": "lighting",
+      "thumbnail": "demos/lighting/thumbnail.jpg",
+      "demoUrl": "demos/lighting/index.html",
+      "featured": true,
+      "popularity": 88,
+      "tags": ["阴影", "光照", "CSM", "VSM"],
+      "techSpecs": {
+        "shadowMaps": 4,
+        "lightSources": 8,
+        "cascades": 4,
+        "resolution": "2048x2048"
+      },
+      "features": [
+        "级联阴影映射 (CSM)",
+        "方差阴影映射 (VSM)",
+        "软阴影",
+        "实时全局光照",
+        "阴影 LOD"
+      ]
+    },
+    {
+      "id": "animation",
+      "title": "动画角色",
+      "description": "高性能骨骼动画系统，支持混合树、表情动画和物理驱动动画",
+      "category": "animation",
+      "thumbnail": "demos/animation/thumbnail.jpg",
+      "demoUrl": "demos/animation/index.html",
+      "featured": true,
+      "popularity": 92,
+      "tags": ["动画", "角色", "骨骼", "混合"],
+      "techSpecs": {
+        "bones": 64,
+        "animations": 24,
+        "blendTrees": 8,
+        "morphTargets": 32
+      },
+      "features": [
+        "GPU 蒙皮",
+        "动画混合树",
+        "表情混合形状",
+        "逆向运动学 (IK)",
+        "动画状态机"
+      ]
+    },
+    {
+      "id": "particles",
+      "title": "粒子系统",
+      "description": "GPU 加速粒子系统，支持火焰、烟雾、魔法等多种特效",
+      "category": "effects",
+      "thumbnail": "demos/particles/thumbnail.jpg",
+      "demoUrl": "demos/particles/index.html",
+      "featured": true,
+      "popularity": 90,
+      "tags": ["粒子", "特效", "GPU", "火焰"],
+      "techSpecs": {
+        "maxParticles": 100000,
+        "emitters": 16,
+        "simulations": "GPU",
+        "renderMode": "instanced"
+      },
+      "features": [
+        "GPU 粒子模拟",
+        "碰撞检测",
+        "子发射器",
+        "力场系统",
+        "自定义着色器"
+      ]
+    },
+    {
+      "id": "performance",
+      "title": "性能测试",
+      "description": "万级物体渲染压力测试，展示引擎的大规模场景渲染能力",
+      "category": "performance",
+      "thumbnail": "demos/performance/thumbnail.jpg",
+      "demoUrl": "demos/performance/index.html",
+      "featured": false,
+      "popularity": 75,
+      "tags": ["性能", "优化", "大规模", "测试"],
+      "techSpecs": {
+        "objects": 10000,
+        "drawCalls": 128,
+        "instances": 10000,
+        "culling": "frustum+occlusion"
+      },
+      "features": [
+        "实例化渲染",
+        "视锥剔除",
+        "遮挡剔除",
+        "LOD 系统",
+        "多线程渲染"
+      ]
+    }
+  ],
+  "categories": [
+    { "id": "materials", "name": "材质渲染", "icon": "🎨" },
+    { "id": "lighting", "name": "光照阴影", "icon": "💡" },
+    { "id": "animation", "name": "动画角色", "icon": "🎭" },
+    { "id": "effects", "name": "特效粒子", "icon": "✨" },
+    { "id": "performance", "name": "性能优化", "icon": "⚡" }
+  ],
+  "stats": {
+    "totalDemos": 5,
+    "totalViews": 0,
+    "lastReset": "2026-03-26"
+  }
+}
