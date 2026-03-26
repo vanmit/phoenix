@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phoenix Engine - Cross-Platform Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            max-width: 1200px;
+            width: 95%;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+            background: linear-gradient(90deg, #e94560, #0f3460);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+        
+        #canvas-container {
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            margin-bottom: 20px;
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            max-width: 960px;
+            margin: 0 auto;
+        }
+        
+        .info-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 3px solid #e94560;
+        }
+        
+        .info-label {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        
+        button {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95em;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #ff6b6b;
+            transform: translateY(-2px);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .status {
+            color: #888;
+            font-size: 0.9em;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            padding: 15px;
+            background: rgba(255, 107, 107, 0.1);
+            border-radius: 6px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦅 Phoenix Engine</h1>
+        <p class="subtitle">Cross-Platform Rendering Demo (WebGPU/WebGL)</p>
+        
+        <div id="canvas-container">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div class="status" id="status">Loading Phoenix Engine...</div>
+            </div>
+            <canvas id="canvas" style="display: none;"></canvas>
+        </div>
+        
+        <div class="info-panel">
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Platform</div>
+                    <div class="info-value" id="platform-info">Web</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Render Backend</div>
+                    <div class="info-value" id="backend-info">Detecting...</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Resolution</div>
+                    <div class="info-value" id="resolution-info">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">FPS</div>
+                    <div class="info-value" id="fps-info">-</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button onclick="toggleFullscreen()">Toggle Fullscreen</button>
+            <button onclick="resetDemo()">Reset Demo</button>
+            <button onclick="showStats()">Show Stats</button>
+        </div>
+        
+        <div id="error-container"></div>
+    </div>
+    
+    <script>
+        let canvas = document.getElementById('canvas');
+        let loading = document.getElementById('loading');
+        let status = document.getElementById('status');
+        let errorContainer = document.getElementById('error-container');
+        
+        // 检测 WebGPU 支持
+        async function detectBackend() {
+            const backendInfo = document.getElementById('backend-info');
+            
+            if (navigator.gpu) {
+                try {
+                    const adapter = await navigator.gpu.requestAdapter();
+                    const device = await adapter.requestDevice();
+                    backendInfo.textContent = 'WebGPU';
+                    backendInfo.style.color = '#4ade80';
+                    return true;
+                } catch (e) {
+                    console.warn('WebGPU available but failed to initialize:', e);
+                }
+            }
+            
+            // 回退到 WebGL
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+            if (gl) {
+                backendInfo.textContent = 'WebGL 2.0';
+                backendInfo.style.color = '#fbbf24';
+                return true;
+            }
+            
+            backendInfo.textContent = 'None';
+            backendInfo.style.color = '#ff6b6b';
+            return false;
+        }
+        
+        // 更新信息面板
+        function updateInfo() {
+            const resolutionInfo = document.getElementById('resolution-info');
+            const fpsInfo = document.getElementById('fps-info');
+            
+            if (canvas.width && canvas.height) {
+                resolutionInfo.textContent = `${canvas.width} × ${canvas.height}`;
+            }
+            
+            // FPS 会在运行时更新
+        }
+        
+        // 全屏切换
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.getElementById('canvas-container').requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // 重置演示
+        function resetDemo() {
+            location.reload();
+        }
+        
+        // 显示统计
+        function showStats() {
+            alert('Phoenix Engine Demo\n\nControls:\n- ESC: Exit\n- Mouse: Look\n- WASD: Move\n\nPlatform: Web\nBackend: Auto-detect');
+        }
+        
+        // 错误处理
+        function showError(message) {
+            errorContainer.innerHTML = `<div class="error">❌ ${message}</div>`;
+            loading.style.display = 'none';
+        }
+        
+        // 初始化
+        async function init() {
+            const hasBackend = await detectBackend();
+            if (!hasBackend) {
+                showError('No suitable rendering backend found. Please use a modern browser.');
+                return;
+            }
+            
+            // 设置 canvas 尺寸
+            const rect = document.getElementById('canvas-container').getBoundingClientRect();
+            canvas.width = Math.min(960, rect.width - 40);
+            canvas.height = canvas.width * 0.75;
+            
+            updateInfo();
+            
+            // Canvas 已准备就绪，Emscripten 会自动初始化
+            canvas.style.display = 'block';
+            loading.style.display = 'none';
+            
+            status.textContent = 'Phoenix Engine initialized successfully!';
+        }
+        
+        // 监听 canvas 创建
+        window.addEventListener('resize', () => {
+            updateInfo();
+        });
+        
+        // 启动
+        init();
+    </script>
+    
+    {{{ SCRIPT }}}
+</body>
+</html>

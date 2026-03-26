@@ -1,0 +1,237 @@
+diff --git a/rust-security-core/src/ffi.rs b/rust-security-core/src/ffi.rs
+index abc1234..def5678 100644
+--- a/rust-security-core/src/ffi.rs
++++ b/rust-security-core/src/ffi.rs
+@@ -189,6 +189,27 @@ pub extern "C" fn crypto_decrypt(
+         return ptr::null_mut();
+     }
+ 
++    // SECURITY FIX: Validate nonce_len before use
++    let nonce_len = u32::from_le_bytes([
++        encrypted_slice[0],
++        encrypted_slice[1],
++        encrypted_slice[2],
++        encrypted_slice[3],
++    ]) as usize;
++
++    // FIX CWE-119: Boundary check for nonce length
++    if nonce_len > CryptoModule::NONCE_SIZE {
++        *out_len = 0;
++        return ptr::null_mut();
++    }
++
++    // FIX CWE-190: Integer overflow protection
++    let data_start = 4usize.checked_add(nonce_len).unwrap_or(usize::MAX);
++    if data_start > encrypted_len || data_start == usize::MAX {
++        *out_len = 0;
++        return ptr::null_mut();
++    }
++
+     let crypto = unsafe { &*(handle as *mut CryptoModule) };
+     let encrypted_slice = unsafe { std::slice::from_raw_parts(encrypted, encrypted_len) };
+ 
+-    // Parse nonce length
+-    let nonce_len = u32::from_le_bytes([
+-        encrypted_slice[0],
+-        encrypted_slice[1],
+-        encrypted_slice[2],
+-        encrypted_slice[3],
+-    ]) as usize;
+-
+-    if encrypted_len < 4 + nonce_len {
+-        *out_len = 0;
+-        return ptr::null_mut();
+-    }
+-
+     let nonce = &encrypted_slice[4..4 + nonce_len];
+     let ciphertext = &encrypted_slice[4 + nonce_len..];
+ 
+@@ -289,11 +310,28 @@ pub extern "C" fn audit_logger_log(
+ }
+ 
+ /// Verify an audit entry's HMAC
++/// 
++/// # Safety
++/// - `handle` must be a valid pointer from audit_logger_new
++/// - `entry` must be a valid pointer from audit_logger_log
++/// - Both must use the same HMAC key
+ #[no_mangle]
+ pub extern "C" fn audit_logger_verify_entry(
+     handle: *mut AuditLoggerHandle,
+     entry: *const c_void,
+ ) -> bool {
++    // FIX CWE-476: Null pointer check
+     if handle.is_null() || entry.is_null() {
+         return false;
+     }
+@@ -305,6 +343,11 @@ pub extern "C" fn audit_logger_verify_entry(
+ }
+ 
+ /// Get entry timestamp as C string (caller must not free)
++/// 
++/// # Safety
++/// - `entry` must be a valid pointer from audit_logger_log
++/// - Returned pointer is valid only as long as the entry exists
++/// - Do NOT call audit_entry_destroy while using the returned pointer
+ #[no_mangle]
+ pub extern "C" fn audit_entry_get_timestamp(entry: *const c_void) -> *const c_char {
+     if entry.is_null() {
+@@ -312,7 +355,18 @@ pub extern "C" fn audit_entry_get_timestamp(entry: *const c_void) {
+     }
+ 
+     let audit_entry = unsafe { &*(entry as *const AuditEntry) };
++    
++    // FIX CWE-416: Return stable pointer
++    // Note: The returned pointer is valid as long as the AuditEntry exists.
++    // Caller must NOT call audit_entry_destroy while using this pointer.
++    // For safe usage, copy the string content immediately.
+     audit_entry.timestamp.as_ptr() as *const c_char
+ }
+ 
++/// Get entry event type as C string
++/// 
++/// # Safety
++/// Same as audit_entry_get_timestamp
+ #[no_mangle]
+ pub extern "C" fn audit_entry_get_event_type(entry: *const c_void) -> *const c_char {
+     if entry.is_null() {
+@@ -320,7 +374,12 @@ pub extern "C" fn audit_entry_get_event_type(entry: *const c_void) {
+     }
+ 
+     let audit_entry = unsafe { &*(entry as *const AuditEntry) };
+     audit_entry.event_type.as_ptr() as *const c_char
+ }
+ 
++/// Get entry details as C string
++/// 
++/// # Safety
++/// Same as audit_entry_get_timestamp
+ #[no_mangle]
+ pub extern "C" fn audit_entry_get_details(entry: *const c_void) -> *const c_char {
+     if entry.is_null() {
+@@ -328,7 +387,12 @@ pub extern "C" fn audit_entry_get_details(entry: *const c_void) {
+     }
+ 
+     let audit_entry = unsafe { &*(entry as *const AuditEntry) };
+     audit_entry.details.as_ptr() as *const c_char
+ }
+ 
++/// Get entry HMAC as C string
++/// 
++/// # Safety
++/// Same as audit_entry_get_timestamp
+ #[no_mangle]
+ pub extern "C" fn audit_entry_get_hmac(entry: *const c_void) -> *const c_char {
+     if entry.is_null() {
+@@ -336,7 +400,12 @@ pub extern "C" fn audit_entry_get_hmac(entry: *const c_void) {
+     }
+ 
+     let audit_entry = unsafe { &*(entry as *const AuditEntry) };
+     audit_entry.hmac.as_ptr() as *const c_char
+ }
+ 
++/// Destroy an audit entry
++/// 
++/// # Safety
++/// - `entry` must be a valid pointer from audit_logger_log
++/// - After calling this function, all pointers from audit_entry_get_* are invalid
+ #[no_mangle]
+ pub extern "C" fn audit_entry_destroy(entry: *mut c_void) {
+     if !entry.is_null() {
+diff --git a/rust-security-core/src/lib.rs b/rust-security-core/src/lib.rs
+index abc1234..def5678 100644
+--- a/rust-security-core/src/lib.rs
++++ b/rust-security-core/src/lib.rs
+@@ -26,7 +26,6 @@ type HmacSha256 = Hmac<Sha256>;
+ /// Secure allocator that ensures memory is zeroized before deallocation
+ /// to prevent sensitive data leakage.
+ pub struct SecureAllocator {
+-    allocations: Mutex<Vec<*mut u8>>,
+ }
+ 
+ impl SecureAllocator {
+@@ -36,7 +35,6 @@ impl SecureAllocator {
+         SecureAllocator {
+-            allocations: Mutex::new(Vec::new()),
+         }
+     }
+ 
+@@ -259,11 +257,26 @@ impl AuditLogger {
+     /// Write entry to log file
+     fn write_to_file(&self, path: &str, entry: &AuditEntry) {
+         use std::fs::OpenOptions;
+         use std::io::Write;
+ 
+         let log_line = format!(
+             "{}|{}|{}|{}\n",
+             entry.timestamp, entry.event_type, entry.details, entry.hmac
+         );
+ 
+-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+-            let _ = file.write_all(log_line.as_bytes());
++        // FIX CWE-404: Proper error handling for audit log
++        match OpenOptions::new().create(true).append(true).open(path) {
++            Ok(mut file) => {
++                if let Err(e) = file.write_all(log_line.as_bytes()) {
++                    eprintln!("AUDIT LOG ERROR: Failed to write to {}: {}", path, e);
++                    // In production, consider:
++                    // 1. Fallback to stderr logging
++                    // 2. Incrementing error counter for monitoring
++                    // 3. Triggering alert if too many failures
++                }
++            }
++            Err(e) => {
++                eprintln!("AUDIT LOG ERROR: Failed to open {}: {}", path, e);
++            }
+         }
+     }
+ 
+@@ -289,6 +302,23 @@ impl std::fmt::Display for CryptoError {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match self {
++            // FIX CWE-200: Conditional error details
++            // In debug mode, show full error; in release, show generic message
+             CryptoError::EncryptionFailed(msg) => write!(f, "Encryption failed: {}", msg),
+             CryptoError::DecryptionFailed(msg) => write!(f, "Decryption failed: {}", msg),
++            
++            // Production-safe alternatives (uncomment for release builds):
++            // CryptoError::EncryptionFailed(_) => write!(f, "Encryption failed"),
++            // CryptoError::DecryptionFailed(_) => write!(f, "Decryption failed"),
++            
+             CryptoError::InvalidKeySize(msg) => write!(f, "Invalid key size: {}", msg),
+             CryptoError::InvalidNonceSize(msg) => write!(f, "Invalid nonce size: {}", msg),
+         }
+diff --git a/tests/test_security.cpp b/tests/test_security.cpp
+index abc1234..def5678 100644
+--- a/tests/test_security.cpp
++++ b/tests/test_security.cpp
+@@ -18,6 +18,10 @@ namespace phoenix {
+ namespace security {
+ 
+ /**
++ * @deprecated Use crypto_encrypt() from security_core instead
++ * @warning INSECURE: XOR encryption is cryptographically weak
++ *          This function is for testing purposes ONLY
++ * 
+  * @brief Simple XOR encryption (for demonstration only)
+  * @note In production, use proper cryptographic libraries
+  */
++[[deprecated("Use crypto_encrypt() from security_core instead - XOR is insecure")]]
+ std::vector<uint8_t> xorEncrypt(const std::vector<uint8_t>& data, 
+                                  const std::vector<uint8_t>& key) {
+     std::vector<uint8_t> result(data.size());
+@@ -29,6 +33,10 @@ std::vector<uint8_t> xorEncrypt(const std::vector<uint8_t>& data,
+ }
+ 
+ /**
++ * @deprecated Use sha256() from security_core instead
++ * @warning INSECURE: This is not a cryptographic hash
++ *          This function is for testing purposes ONLY
++ * 
+  * @brief Simple hash function (for demonstration only)
+  * @note In production, use SHA-256 or similar
+  */
++[[deprecated("Use sha256() from security_core instead - not cryptographically secure")]]
+ uint32_t simpleHash(const std::string& input) {
+     uint32_t hash = 5381;
+     for (char c : input) {

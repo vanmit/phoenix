@@ -1,0 +1,360 @@
+# Phoenix Engine CI/CD Pipeline
+# Tests on Ubuntu, Windows, and macOS with code coverage
+
+name: Phoenix Engine CI
+
+on:
+  push:
+    branches: [main, develop, 'release/*']
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+  schedule:
+    # Run daily at 2 AM UTC to catch integration issues
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      enable_coverage:
+        description: 'Enable code coverage'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  BUILD_TYPE: Release
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  ENABLE_COVERAGE: ${{ github.event.inputs.enable_coverage || 'true' }}
+
+jobs:
+  # ==========================================================================
+  # Build and Test on Ubuntu
+  # ==========================================================================
+  ubuntu:
+    name: Ubuntu ${{ matrix.os_version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os_version: ['22.04']
+        compiler:
+          - { cxx: g++, version: 11 }
+          - { cxx: clang++, version: 14 }
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for coverage
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            lcov \
+            gcovr \
+            libgtest-dev \
+            ccache \
+            ${{ matrix.compiler.cxx }}-${{ matrix.compiler.version }}
+          
+          # Configure ccache
+          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
+          echo "CC=${{ matrix.compiler.cxx }}-${{ matrix.compiler.version }}" >> $GITHUB_ENV
+          echo "CXX=${{ matrix.compiler.cxx }}-${{ matrix.compiler.version }}" >> $GITHUB_ENV
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ubuntu-${{ matrix.compiler.cxx }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ccache-ubuntu-${{ matrix.compiler.cxx }}-
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DENABLE_COVERAGE=${{ env.ENABLE_COVERAGE }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}-${{ matrix.compiler.version }} \
+            -S .
+
+      - name: Build
+        run: |
+          cmake --build build --parallel $(nproc)
+          ccache -s
+
+      - name: Run Tests
+        run: |
+          cd build
+          ctest --output-on-failure --parallel $(nproc)
+
+      - name: Generate Coverage Report
+        if: env.ENABLE_COVERAGE == 'true' && matrix.compiler.cxx == 'g++'
+        run: |
+          cd build
+          lcov --directory . --capture --output-file coverage.info
+          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
+          
+          # Generate HTML report
+          genhtml coverage.info --output-directory coverage_report
+
+      - name: Upload Coverage Report
+        if: env.ENABLE_COVERAGE == 'true' && matrix.compiler.cxx == 'g++'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-ubuntu
+          path: build/coverage_report/
+          retention-days: 14
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-ubuntu-${{ matrix.compiler.cxx }}
+          path: |
+            build/Testing/
+            build/Test*.xml
+          retention-days: 7
+
+  # ==========================================================================
+  # Build and Test on Windows
+  # ==========================================================================
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+        compiler:
+          - { name: msvc, generator: "Visual Studio 17 2022" }
+          - { name: mingw, generator: "MinGW Makefiles" }
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC
+        if: matrix.compiler.name == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup MinGW
+        if: matrix.compiler.name == 'mingw'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-gtest
+
+      - name: Configure CMake (MSVC)
+        if: matrix.compiler.name == 'msvc'
+        run: |
+          cmake -B build `
+            -G "${{ matrix.compiler.generator }}" `
+            -A ${{ matrix.arch }} `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -S .
+
+      - name: Configure CMake (MinGW)
+        if: matrix.compiler.name == 'mingw'
+        shell: msys2 {0}
+        run: |
+          cmake -B build \
+            -G "${{ matrix.compiler.generator }}" \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -S .
+
+      - name: Build (MSVC)
+        if: matrix.compiler.name == 'msvc'
+        run: |
+          cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Build (MinGW)
+        if: matrix.compiler.name == 'mingw'
+        shell: msys2 {0}
+        run: |
+          cmake --build build --parallel $(nproc)
+
+      - name: Run Tests (MSVC)
+        if: matrix.compiler.name == 'msvc'
+        run: |
+          cd build
+          ctest -C ${{ env.BUILD_TYPE }} --output-on-failure
+
+      - name: Run Tests (MinGW)
+        if: matrix.compiler.name == 'mingw'
+        shell: msys2 {0}
+        run: |
+          cd build
+          ctest --output-on-failure
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows-${{ matrix.compiler.name }}
+          path: |
+            build/Testing/
+            build/Test*.xml
+          retention-days: 7
+
+  # ==========================================================================
+  # Build and Test on macOS
+  # ==========================================================================
+  macos:
+    name: macOS ${{ matrix.os_version }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os_version: ['14']
+        compiler:
+          - { cxx: clang++, version: '15' }
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Dependencies
+        run: |
+          brew install cmake ninja lcov ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ccache-macos-
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DENABLE_COVERAGE=${{ env.ENABLE_COVERAGE }} \
+            -S .
+
+      - name: Build
+        run: |
+          cmake --build build --parallel $(sysctl -n hw.ncpu)
+          ccache -s
+
+      - name: Run Tests
+        run: |
+          cd build
+          ctest --output-on-failure --parallel $(sysctl -n hw.ncpu)
+
+      - name: Generate Coverage Report
+        if: env.ENABLE_COVERAGE == 'true'
+        run: |
+          cd build
+          lcov --directory . --capture --output-file coverage.info
+          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
+          genhtml coverage.info --output-directory coverage_report
+
+      - name: Upload Coverage Report
+        if: env.ENABLE_COVERAGE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-macos
+          path: build/coverage_report/
+          retention-days: 14
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-macos
+          path: |
+            build/Testing/
+            build/Test*.xml
+          retention-days: 7
+
+  # ==========================================================================
+  # Coverage Summary and Upload
+  # ==========================================================================
+  coverage-summary:
+    name: Coverage Summary
+    runs-on: ubuntu-latest
+    needs: [ubuntu]
+    if: env.ENABLE_COVERAGE == 'true'
+    
+    steps:
+      - name: Download Coverage Report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report-ubuntu
+          path: coverage_report
+
+      - name: Upload to Codecov (Optional)
+        # Uncomment and configure if using Codecov
+        # uses: codecov/codecov-action@v4
+        # with:
+        #   files: ./coverage_report/coverage.info
+        #   flags: unittests
+        #   name: codecov-phoenix-engine
+        #   fail_ci_if_error: false
+        run: |
+          echo "Coverage report available in artifacts"
+          echo "To upload to Codecov, configure the codecov-action in this workflow"
+
+      - name: Generate Coverage Summary
+        run: |
+          echo "## Code Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Coverage report generated and uploaded as artifact." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Download Instructions" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Go to the Actions tab" >> $GITHUB_STEP_SUMMARY
+          echo "2. Select this workflow run" >> $GITHUB_STEP_SUMMARY
+          echo "3. Scroll to 'Artifacts' section" >> $GITHUB_STEP_SUMMARY
+          echo "4. Download 'coverage-report-ubuntu'" >> $GITHUB_STEP_SUMMARY
+          echo "5. Open \`index.html\` in a browser" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Status Check
+  # ==========================================================================
+  status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [ubuntu, windows, macos]
+    if: always()
+    
+    steps:
+      - name: Check Job Status
+        run: |
+          echo "Ubuntu: ${{ needs.ubuntu.result }}"
+          echo "Windows: ${{ needs.windows.result }}"
+          echo "macOS: ${{ needs.macos.result }}"
+          
+          if [[ "${{ needs.ubuntu.result }}" == "failure" ]] || \
+             [[ "${{ needs.windows.result }}" == "failure" ]] || \
+             [[ "${{ needs.macos.result }}" == "failure" ]]; then
+            echo "CI pipeline failed!"
+            exit 1
+          fi
+          
+          echo "All CI checks passed!"

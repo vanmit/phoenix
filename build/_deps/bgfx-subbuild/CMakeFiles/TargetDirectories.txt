@@ -1,0 +1,3 @@
+/home/admin/.openclaw/workspace/phoenix-engine/build/_deps/bgfx-subbuild/CMakeFiles/bgfx-populate.dir
+/home/admin/.openclaw/workspace/phoenix-engine/build/_deps/bgfx-subbuild/CMakeFiles/edit_cache.dir
+/home/admin/.openclaw/workspace/phoenix-engine/build/_deps/bgfx-subbuild/CMakeFiles/rebuild_cache.dir

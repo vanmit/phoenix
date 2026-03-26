@@ -1,0 +1,11 @@
+# Hashes of file build rules.
+ce60af6004382dbfeaa273370a79d83d CMakeFiles/bgfx-populate
+b918af6a88a0f60604058761ecc06954 CMakeFiles/bgfx-populate-complete
+70de28bdfddd703f50a212b16887e120 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-build
+9301afd30e24d1cc2be1e669df586668 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-configure
+185219c9003dd869e42a9d9b8b774fc3 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-download
+d1da6a307c16991804b4e79dbed472e7 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-install
+9425eddc64497aef6c79f1b098c02870 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-mkdir
+0e8dda2c9d75b28c89914a8c5088b3f1 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-patch
+b6024680229a61b60283426906f5c178 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-test
+5e8851a48b87f9f529e57459d73350a5 bgfx-populate-prefix/src/bgfx-populate-stamp/bgfx-populate-update

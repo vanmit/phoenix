@@ -1,0 +1,108 @@
+{
+  "name": "@phoenix-engine/wasm",
+  "version": "1.0.0",
+  "description": "Phoenix Engine WebAssembly Build - High-performance 3D rendering for the web",
+  "main": "dist/phoenix-wasm.js",
+  "module": "dist/phoenix-wasm.mjs",
+  "types": "dist/phoenix-wasm.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/phoenix-wasm.mjs",
+      "require": "./dist/phoenix-wasm.js",
+      "types": "./dist/phoenix-wasm.d.ts"
+    },
+    "./react": {
+      "import": "./examples/react/PhoenixEngine.tsx",
+      "types": "./examples/react/PhoenixEngine.tsx"
+    },
+    "./vue": {
+      "import": "./examples/vue/PhoenixEngine.vue"
+    },
+    "./dist/*": "./dist/*"
+  },
+  "files": [
+    "dist",
+    "js",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "cmake --build build --config Release",
+    "build:debug": "cmake --build build --config Debug",
+    "build:release": "cmake --build build --config Release --target phoenix-wasm-opt",
+    "build:compress": "cmake --build build --config Release --target phoenix-wasm-br",
+    "dev": "cmake --build build --config Debug && npm run serve",
+    "serve": "http-server dist -p 8080 -c-1",
+    "test": "cmake --build build --target phoenix-wasm-tests && node tests/run-tests.js",
+    "benchmark": "node benchmarks/run-benchmark.js",
+    "lint": "eslint js/**/*.ts examples/**/*.tsx examples/**/*.vue",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build:release && npm run test",
+    "clean": "rm -rf build/dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phoenix-engine/phoenix-engine.git",
+    "directory": "wasm"
+  },
+  "keywords": [
+    "webassembly",
+    "wasm",
+    "webgl",
+    "webgpu",
+    "3d",
+    "rendering",
+    "game-engine",
+    "graphics",
+    "phoenix-engine"
+  ],
+  "author": "Phoenix Engine Team",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/phoenix-engine/phoenix-engine/issues"
+  },
+  "homepage": "https://phoenix-engine.dev",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitejs/plugin-vue": "^4.0.0",
+    "eslint": "^8.45.0",
+    "http-server": "^14.1.1",
+    "puppeteer": "^21.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.1.0",
+    "vue": "^3.3.0",
+    "wasm-opt": "^1.0.0"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0",
+    "vue": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  },
+  "sideEffects": false,
+  "browser": {
+    "fs": false,
+    "path": false,
+    "crypto": false
+  }
+}

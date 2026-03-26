@@ -1,0 +1,39 @@
+[package]
+name = "phoenix-security-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Phoenix Engine Team"]
+description = "Secure memory allocation, AES-256-GCM encryption, and audit logging for Phoenix Engine"
+license = "MIT"
+
+[dependencies]
+# AES-256-GCM encryption
+aes-gcm = "0.10"
+aead = { version = "0.5", features = ["alloc"] }
+rand = "0.8"
+
+# HMAC for audit log integrity
+hmac = "0.12"
+sha2 = "0.10"
+
+# Time handling for timestamps
+time = { version = "0.3", features = ["formatting", "macros"] }
+
+# Zeroize for secure memory clearing
+zeroize = { version = "1.7", features = ["derive"] }
+
+# Hex encoding for key/display purposes
+hex = "0.4"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
+
+[[example]]
+name = "cpp_example"
+path = "examples/cpp_example.cpp"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phoenix Engine - WebAssembly Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            min-width: 250px;
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 15px;
+            color: #00d4ff;
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+        
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stat:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: #aaa;
+        }
+        
+        .stat-value {
+            font-weight: bold;
+            color: #00ff88;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        #log {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 400px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .log-info { color: #00d4ff; }
+        .log-success { color: #00ff88; }
+        .log-error { color: #ff4444; }
+        .log-warn { color: #ffaa00; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas"></canvas>
+        
+        <div id="ui">
+            <h1>🔥 Phoenix Engine</h1>
+            <div class="stat">
+                <span class="stat-label">FPS:</span>
+                <span class="stat-value" id="fps">--</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Frame Time:</span>
+                <span class="stat-value" id="frameTime">--</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Draw Calls:</span>
+                <span class="stat-value" id="drawCalls">--</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Memory:</span>
+                <span class="stat-value" id="memory">--</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Backend:</span>
+                <span class="stat-value" id="backend">--</span>
+            </div>
+        </div>
+        
+        <div id="controls">
+            <button id="btnStart" onclick="engine.start()">Start</button>
+            <button id="btnStop" onclick="engine.stop()" disabled>Stop</button>
+            <button id="btnScreenshot" onclick="takeScreenshot()">Screenshot</button>
+            <button id="btnBenchmark" onclick="runBenchmark()">Benchmark</button>
+        </div>
+        
+        <div id="loading">
+            <div class="spinner"></div>
+            <div id="loadingText">Loading Phoenix Engine...</div>
+        </div>
+        
+        <div id="log"></div>
+    </div>
+    
+    <script src="phoenix-wasm.js"></script>
+    <script src="phoenix-wasm-api.js"></script>
+    <script>
+        // Global engine instance
+        let engine = null;
+        let frameCount = 0;
+        let lastTime = performance.now();
+        
+        // Logging utility
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+            
+            // Keep only last 50 entries
+            while (logEl.children.length > 50) {
+                logEl.removeChild(logEl.firstChild);
+            }
+        }
+        
+        // Update UI statistics
+        function updateStats(frameInfo, memoryStats, backend) {
+            document.getElementById('fps').textContent = frameInfo.fps.toFixed(1);
+            document.getElementById('frameTime').textContent = (frameInfo.frameTime * 1000).toFixed(2) + ' ms';
+            document.getElementById('drawCalls').textContent = frameCount;
+            
+            if (memoryStats) {
+                const mb = (memoryStats.usedBytes / 1024 / 1024).toFixed(1);
+                document.getElementById('memory').textContent = mb + ' MB';
+            }
+            
+            document.getElementById('backend').textContent = backend;
+        }
+        
+        // Take screenshot
+        function takeScreenshot() {
+            const canvas = document.getElementById('canvas');
+            const link = document.createElement('a');
+            link.download = `phoenix-screenshot-${Date.now()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            log('Screenshot saved!', 'success');
+        }
+        
+        // Run benchmark
+        async function runBenchmark() {
+            log('Starting benchmark...', 'info');
+            const startTime = performance.now();
+            const targetFrames = 300; // 5 seconds at 60fps
+            const fpsSamples = [];
+            
+            const benchmarkCallback = (frameInfo) => {
+                fpsSamples.push(frameInfo.fps);
+                frameCount++;
+                
+                if (frameCount >= targetFrames) {
+                    const avgFps = fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length;
+                    const minFps = Math.min(...fpsSamples);
+                    const maxFps = Math.max(...fpsSamples);
+                    const duration = performance.now() - startTime;
+                    
+                    log(`Benchmark complete!`, 'success');
+                    log(`  Duration: ${(duration / 1000).toFixed(2)}s`, 'info');
+                    log(`  Average FPS: ${avgFps.toFixed(1)}`, 'info');
+                    log(`  Min FPS: ${minFps.toFixed(1)}`, 'info');
+                    log(`  Max FPS: ${maxFps.toFixed(1)}`, 'info');
+                    
+                    engine.setCallbacks({ onFrame: onFrame });
+                }
+            };
+            
+            frameCount = 0;
+            engine.setCallbacks({ onFrame: benchmarkCallback });
+        }
+        
+        // Frame callback
+        function onFrame(frameInfo) {
+            frameCount++;
+            const now = performance.now();
+            
+            // Update stats every 10 frames
+            if (frameCount % 10 === 0) {
+                const memoryStats = engine.getMemoryStats();
+                const caps = engine.getGraphicsCaps();
+                const backend = caps.hasWebGPU ? 'WebGPU' : (caps.hasWebGL2 ? 'WebGL2' : 'WebGL');
+                updateStats(frameInfo, memoryStats, backend);
+            }
+        }
+        
+        // Initialize engine
+        async function initEngine() {
+            try {
+                log('Initializing Phoenix Engine...', 'info');
+                
+                engine = new PhoenixEngine();
+                
+                engine.setCallbacks({
+                    onProgress: (progress) => {
+                        document.getElementById('loadingText').textContent = 
+                            `Loading... ${Math.round(progress * 100)}%`;
+                        log(`Loading: ${Math.round(progress * 100)}%`, 'info');
+                    },
+                    onLoad: (eng) => {
+                        log('Engine loaded successfully!', 'success');
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('btnStart').disabled = false;
+                        
+                        const caps = eng.getGraphicsCaps();
+                        log(`Graphics Backend: ${caps.hasWebGPU ? 'WebGPU' : (caps.hasWebGL2 ? 'WebGL2' : 'WebGL')}`, 'success');
+                        log(`Max Texture Size: ${caps.maxTextureSize}`, 'info');
+                    },
+                    onError: (error) => {
+                        log(`Error: ${error.message}`, 'error');
+                        document.getElementById('loadingText').textContent = 'Failed to load';
+                        document.getElementById('loadingText').style.color = '#ff4444';
+                    }
+                });
+                
+                await engine.init({
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    enableWebGPU: true,
+                    enableWebGL2: true,
+                    canvasId: 'canvas'
+                });
+                
+                // Handle window resize
+                window.addEventListener('resize', () => {
+                    if (engine) {
+                        engine.resize(window.innerWidth, window.innerHeight);
+                    }
+                });
+                
+            } catch (error) {
+                log(`Initialization failed: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+        
+        // Start engine methods
+        engine = {
+            start: function() {
+                if (this.isRunning) return;
+                this.isRunning = true;
+                document.getElementById('btnStart').disabled = true;
+                document.getElementById('btnStop').disabled = false;
+                log('Engine started', 'success');
+                
+                // In real implementation, this would call the actual engine
+                this._renderLoop();
+            },
+            
+            stop: function() {
+                this.isRunning = false;
+                document.getElementById('btnStart').disabled = false;
+                document.getElementById('btnStop').disabled = true;
+                log('Engine stopped', 'warn');
+            },
+            
+            _renderLoop: function() {
+                if (!this.isRunning) return;
+                
+                // Simulate frame rendering
+                frameCount++;
+                
+                requestAnimationFrame(() => this._renderLoop());
+            },
+            
+            resize: function(w, h) {
+                const canvas = document.getElementById('canvas');
+                canvas.width = w;
+                canvas.height = h;
+            },
+            
+            getMemoryStats: function() {
+                return { usedBytes: performance.memory?.usedJSHeapSize || 50 * 1024 * 1024 };
+            },
+            
+            getGraphicsCaps: function() {
+                return {
+                    hasWebGPU: !!navigator.gpu,
+                    hasWebGL2: !!document.createElement('canvas').getContext('webgl2'),
+                    maxTextureSize: 16384
+                };
+            },
+            
+            setCallbacks: function(callbacks) {
+                // Store callbacks
+            }
+        };
+        
+        // Initialize on load
+        window.addEventListener('load', initEngine);
+    </script>
+</body>
+</html>

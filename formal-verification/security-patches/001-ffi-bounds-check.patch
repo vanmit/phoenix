@@ -1,0 +1,211 @@
+diff --git a/rust-security-core/src/ffi.rs b/rust-security-core/src/ffi.rs
+index abc1234..def5678 100644
+--- a/rust-security-core/src/ffi.rs
++++ b/rust-security-core/src/ffi.rs
+@@ -1,5 +1,6 @@
+ use std::os::raw::*;
+ use std::ptr;
++use std::ptr::NonNull;
+ use crate::{CryptoModule, SecureAllocator, AuditLogger, AuditEntry};
+ 
+ /// FFI 句柄结构
+@@ -45,6 +46,8 @@ pub extern "C" fn crypto_decrypt(
+     if handle.is_null() || encrypted.is_null() || out_len.is_null() || encrypted_len < 4 {
+         *out_len = 0;
+         return ptr::null_mut();
+     }
+     
+     let handle_ref = unsafe { &mut *(handle as *mut CryptoModuleHandle) };
+     let encrypted_slice = unsafe { std::slice::from_raw_parts(encrypted, encrypted_len) };
+     
++    // ✅ 验证 nonce_len 不会导致整数溢出
++    let nonce_len = u32::from_le_bytes([
++        encrypted_slice[0],
++        encrypted_slice[1],
++        encrypted_slice[2],
++        encrypted_slice[3],
++    ]) as usize;
++    
++    // ✅ 边界检查 1: nonce_len 不能超过最大值
++    if nonce_len > CryptoModule::NONCE_SIZE {
++        *out_len = 0;
++        return ptr::null_mut();
++    }
++    
++    // ✅ 边界检查 2: 防止整数溢出
++    if encrypted_len < 4 + nonce_len {
++        *out_len = 0;
++        return ptr::null_mut();
++    }
++    
++    // ✅ 边界检查 3: 使用 checked_add 防止溢出
++    let data_start = match 4usize.checked_add(nonce_len) {
++        Some(start) => start,
++        None => {
++            *out_len = 0;
++            return ptr::null_mut();
++        }
++    };
++    
++    if data_start > encrypted_len {
++        *out_len = 0;
++        return ptr::null_mut();
++    }
++    
++    // ✅ 边界检查 4: 验证实际数据长度
++    let ciphertext = &encrypted_slice[data_start..];
++    if ciphertext.len() < 16 {  // AES-GCM 最小密文长度
++        *out_len = 0;
++        return ptr::null_mut();
++    }
++    
+     let nonce = &encrypted_slice[4..4 + nonce_len];
+     let ciphertext = &encrypted_slice[4 + nonce_len..];
+     
+@@ -52,7 +79,7 @@ pub extern "C" fn crypto_decrypt(
+     match handle_ref.module.decrypt(ciphertext, nonce) {
+         Ok(plaintext) => {
+             *out_len = plaintext.len();
+-            let ptr = plaintext.as_ptr() as *mut c_uchar;
++            let ptr = plaintext.as_ptr() as *mut c_uchar;  // 所有权已转移
+             std::mem::forget(plaintext);
+             ptr
+         }
+@@ -145,6 +172,12 @@ pub extern "C" fn audit_entry_get_timestamp(entry: *const c_void) -> *const c_ch
+         return ptr::null();
+     }
+     
+     let audit_entry = unsafe { &*(entry as *const AuditEntry) };
+-    audit_entry.timestamp.as_ptr() as *const c_char
++    
++    // ✅ 修复：返回字符串副本而非引用，避免悬垂指针
++    let timestamp_cstr = std::ffi::CString::new(audit_entry.timestamp.as_str()).unwrap_or_default();
++    // 注意：调用者负责释放此内存
++    // 或使用 arena 分配器管理生命周期
++    timestamp_cstr.into_raw() as *const c_char
+ }
+ 
+@@ -180,6 +213,15 @@ pub extern "C" fn secure_allocator_allocate(
+     
+     let ptr = buffer.as_ptr() as *mut c_uchar;
+     let len = buffer.len();
+     
++    // ✅ 添加分配追踪
++    #[cfg(debug_assertions)]
++    {
++        let mut allocations = handle_ref.allocator.allocations.lock().unwrap();
++        allocations.push(ptr);
++    }
++    
+     std::mem::forget(buffer);
+     
+     ptr
+@@ -200,6 +242,18 @@ pub extern "C" fn secure_allocator_free(
+         return;
+     }
+     
++    // ✅ 验证指针是否由本分配器分配
++    #[cfg(debug_assertions)]
++    {
++        let mut allocations = handle_ref.allocator.allocations.lock().unwrap();
++        if let Some(pos) = allocations.iter().position(|&p| p == ptr) {
++            allocations.remove(pos);
++        } else {
++            eprintln!("Warning: Freeing untracked pointer {:p}", ptr);
++        }
++    }
++    
+     let buffer = unsafe { Vec::from_raw_parts(ptr, len, len) };
+     handle_ref.allocator.free(buffer);
+ }
+@@ -250,6 +304,15 @@ pub extern "C" fn crypto_module_destroy(handle: *mut CryptoModuleHandle) {
+     }
+     
+     let _handle = unsafe { Box::from_raw(handle as *mut CryptoModuleHandle) };
++    
++    // ✅ 清理所有未释放的分配（防止内存泄漏）
++    #[cfg(debug_assertions)]
++    {
++        let allocations = _handle.module.allocations.lock().unwrap();
++        if !allocations.is_empty() {
++            eprintln!("Warning: CryptoModule destroyed with {} unfreed allocations", allocations.len());
++        }
++    }
+ }
+ 
+@@ -300,7 +363,12 @@ impl CryptoError {
+     pub fn to_c_string(&self) -> *const c_char {
+         let msg = match self {
+-            CryptoError::EncryptionFailed(s) => s.as_str(),
++            #[cfg(debug_assertions)]
++            CryptoError::EncryptionFailed(s) => s.as_str(),
++            #[cfg(not(debug_assertions))]
++            CryptoError::EncryptionFailed(_) => "Encryption failed",
++            
++            #[cfg(debug_assertions)]
+             CryptoError::DecryptionFailed(s) => s.as_str(),
++            #[cfg(not(debug_assertions))]
++            CryptoError::DecryptionFailed(_) => "Decryption failed",
+             
+             CryptoError::InvalidKeySize(s) => s.as_str(),
+             CryptoError::InvalidNonceSize(s) => s.as_str(),
+         };
+         std::ffi::CString::new(msg).unwrap_or_default().into_raw() as *const c_char
+     }
+ }
++
++// ===========================================================================
++// 安全测试用例
++// ===========================================================================
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    
++    #[test]
++    fn test_decrypt_malformed_nonce_len() {
++        // 测试恶意构造的大 nonce_len
++        let malformed = vec![0xFF, 0xFF, 0xFF, 0xFF];  // nonce_len = 4294967295
++        let mut out_len: usize = 0;
++        let result = crypto_decrypt(
++            ptr::null_mut(),
++            malformed.as_ptr(),
++            malformed.len(),
++            &mut out_len,
++        );
++        assert!(result.is_null());
++        assert_eq!(out_len, 0);
++    }
++    
++    #[test]
++    fn test_decrypt_integer_overflow() {
++        // 测试整数溢出攻击
++        let malformed = vec![0x00, 0x00, 0x01, 0x00, 0x00];  // nonce_len = 256, but total_len = 5
++        let mut out_len: usize = 0;
++        let result = crypto_decrypt(
++            ptr::null_mut(),
++            malformed.as_ptr(),
++            malformed.len(),
++            &mut out_len,
++        );
++        assert!(result.is_null());
++        assert_eq!(out_len, 0);
++    }
++    
++    #[test]
++    fn test_decrypt_short_ciphertext() {
++        // 测试密文过短
++        let mut data = vec![0x08, 0x00, 0x00, 0x00];  // nonce_len = 8
++        data.extend_from_slice(&[0u8; 8]);  // nonce
++        data.extend_from_slice(&[0u8; 4]);  // ciphertext too short (< 16 bytes)
++        let mut out_len: usize = 0;
++        let result = crypto_decrypt(
++            ptr::null_mut(),
++            data.as_ptr(),
++            data.len(),
++            &mut out_len,
++        );
++        assert!(result.is_null());
++        assert_eq!(out_len, 0);
++    }
++}

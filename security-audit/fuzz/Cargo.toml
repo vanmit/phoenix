@@ -1,0 +1,65 @@
+# Phoenix Security Core - Fuzzing Configuration
+# Uses libFuzzer for coverage-guided fuzzing
+
+[package]
+name = "phoenix-security-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+phoenix-security-core = { path = ".." }
+arbitrary = { version = "1.3", features = ["derive"] }
+
+[dev-dependencies]
+quickcheck = "1.0"
+
+[[bin]]
+name = "crypto_encrypt_fuzzer"
+path = "fuzz_targets/crypto_encrypt_fuzzer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto_decrypt_fuzzer"
+path = "fuzz_targets/crypto_decrypt_fuzzer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audit_logger_fuzzer"
+path = "fuzz_targets/audit_logger_fuzzer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ffi_encrypt_fuzzer"
+path = "fuzz_targets/ffi_encrypt_fuzzer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ffi_decrypt_fuzzer"
+path = "fuzz_targets/ffi_decrypt_fuzzer.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+opt-level = 3
+debug = true
+lto = true
+codegen-units = 1
+
+[profile.fuzz]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
