@@ -1,0 +1,44 @@
+# Demo Scene Placeholder
+
+This is a placeholder for the demo-scene.glb file.
+
+In production, this would be a binary glTF 2.0 file containing:
+- 5 3D models (sphere, torus, cube, cone, cylinder)
+- PBR materials with metalness/roughness
+- Skeleton for character animation
+- Morph targets for facial expressions
+- Animation clips (idle, walk, run, jump)
+
+## To create the actual GLB file:
+
+### Option 1: Using Blender
+1. Create models in Blender
+2. Apply PBR materials
+3. Add armature for skeletal animation
+4. Create animation actions
+5. Export as glTF 2.0 (.glb)
+
+### Option 2: Using glTF-Transform
+```bash
+npm install -g @gltf-transform/cli
+
+# Create from components
+gltf-transform compose input.json output.glb
+
+# Optimize
+gltf-transform optimize demo-scene.glb --texture-compress webp
+```
+
+### Option 3: Download Sample Models
+- Sketchfab: https://sketchfab.com/models?downloadable=true
+- Poly Haven: https://polyhaven.com/models
+- Khronos glTF Sample Models: https://github.com/KhronosGroup/glTF-Sample-Models
+
+## Recommended Models for Demo:
+1. **DamagedHelmet** - PBR material showcase
+2. **CesiumMan** - Skeletal animation
+3. **FlightHelmet** - Complex materials
+4. **BrainStem** - Multiple animations
+5. **BoxAnimated** - Simple animation test
+
+All available from: https://github.com/KhronosGroup/glTF-Sample-Models

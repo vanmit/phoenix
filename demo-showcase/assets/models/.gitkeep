@@ -1,0 +1,10 @@
+# 3D Models Directory
+
+Place glTF/GLB models here:
+- sphere.glb
+- torus.glb
+- cube.glb
+- cone.glb
+- cylinder.glb
+
+Recommended: Use Draco compression for smaller file sizes.

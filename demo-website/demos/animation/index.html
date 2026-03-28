@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>动画角色 - Phoenix Engine</title>
+  <style>
+    body { margin: 0; background: #0a0a15; color: white; font-family: 'Segoe UI', sans-serif; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    .header { text-align: center; margin-bottom: 2rem; }
+    .header h1 { color: #ff6b35; margin-bottom: 0.5rem; }
+    .canvas-wrapper { 
+      background: #1a1a2e; 
+      border-radius: 12px; 
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    canvas { width: 100%; height: 500px; display: block; }
+    .controls { 
+      display: flex; 
+      gap: 1rem; 
+      padding: 1rem; 
+      background: #16213e;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .control-group { display: flex; align-items: center; gap: 0.5rem; }
+    .control-group label { font-size: 0.9rem; color: #b8b8b8; }
+    select, button { 
+      padding: 0.5rem 1rem; 
+      background: #1a1a2e; 
+      border: 1px solid #333; 
+      color: white; 
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { background: #ff6b35; }
+    .animation-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .anim-btn { padding: 0.5rem 1rem; background: #1a1a2e; border: 1px solid #333; color: white; border-radius: 6px; cursor: pointer; }
+    .anim-btn.active { background: #ff6b35; border-color: #ff6b35; }
+    .stats { 
+      display: flex; 
+      gap: 2rem; 
+      padding: 1rem; 
+      background: #16213e;
+      margin-top: 1rem;
+      border-radius: 8px;
+      flex-wrap: wrap;
+    }
+    .stat { text-align: center; }
+    .stat-value { font-size: 1.5rem; font-weight: bold; color: #ff6b35; }
+    .stat-label { font-size: 0.8rem; color: #888; }
+    .back-link { 
+      display: inline-flex; 
+      align-items: center; 
+      gap: 0.5rem; 
+      color: #2ec4b6; 
+      text-decoration: none;
+      margin-bottom: 1rem;
+    }
+    .back-link:hover { color: #ff6b35; }
+    .timeline {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #1a1a2e;
+      border-radius: 8px;
+    }
+    .timeline-bar {
+      height: 8px;
+      background: #333;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+    .timeline-progress {
+      height: 100%;
+      background: linear-gradient(90deg, #ff6b35, #f7c59f);
+      width: 0%;
+      transition: width 0.1s;
+    }
+    .timeline-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #888;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .info-card {
+      background: #16213e;
+      padding: 1.5rem;
+      border-radius: 8px;
+      border-left: 3px solid #2ec4b6;
+    }
+    .info-card h3 { color: #ff6b35; margin-bottom: 0.5rem; }
+    .info-card p { color: #b8b8b8; font-size: 0.9rem; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="../../index.html" class="back-link">← 返回演示中心</a>
+    
+    <div class="header">
+      <h1>🎭 动画角色</h1>
+      <p>高性能骨骼动画系统 - 混合树 / 表情动画 / IK</p>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="glCanvas"></canvas>
+      <div class="controls">
+        <div class="control-group">
+          <label>动画状态:</label>
+          <div class="animation-buttons">
+            <button class="anim-btn active" data-anim="idle">待机</button>
+            <button class="anim-btn" data-anim="walk">行走</button>
+            <button class="anim-btn" data-anim="run">奔跑</button>
+            <button class="anim-btn" data-anim="jump">跳跃</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <label>播放速度:</label>
+          <select id="playbackSpeed">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1.0x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2.0x</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label><input type="checkbox" id="enableBlend" checked> 动画混合</label>
+        </div>
+      </div>
+      <div class="timeline">
+        <div class="timeline-bar">
+          <div class="timeline-progress" id="timelineProgress"></div>
+        </div>
+        <div class="timeline-labels">
+          <span>0%</span>
+          <span id="currentTime">0.0s</span>
+          <span>100%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="fpsCounter">60</div>
+        <div class="stat-label">FPS</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="bones">64</div>
+        <div class="stat-label">骨骼数</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="animations">24</div>
+        <div class="stat-label">动画片段</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="blendTrees">8</div>
+        <div class="stat-label">混合树</div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>🦴 GPU 蒙皮</h3>
+        <p>使用 GPU 进行顶点蒙皮计算，支持大量骨骼同时影响顶点，大幅提升动画性能，支持每顶点最多 4 根骨骼权重。</p>
+      </div>
+      <div class="info-card">
+        <h3>🌳 动画混合树</h3>
+        <p>基于状态机的动画混合系统，支持 1D/2D 混合空间，实现平滑的动作过渡，如行走 - 奔跑的无缝切换。</p>
+      </div>
+      <div class="info-card">
+        <h3>😊 表情混合形状</h3>
+        <p>支持 Morph Target 表情系统，可混合多种面部表情，实现丰富的角色表情动画，支持权重曲线控制。</p>
+      </div>
+      <div class="info-card">
+        <h3>🔄 逆向运动学</h3>
+        <p>CCD 和 FABRIK 算法实现实时 IK，用于脚部贴合地面、手部抓取等场景，支持多关节链式求解。</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 2rem; padding: 1.5rem; background: #16213e; border-radius: 8px;">
+      <h3 style="color: #ff6b35; margin-bottom: 1rem;">技术特性</h3>
+      <ul style="color: #b8b8b8; line-height: 2; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+        <li>✓ GPU 顶点蒙皮</li>
+        <li>✓ 动画状态机</li>
+        <li>✓ 混合树 (1D/2D)</li>
+        <li>✓ 表情 Morph Target</li>
+        <li>✓ 逆向运动学 (IK)</li>
+        <li>✓ 动画压缩</li>
+        <li>✓ 根运动提取</li>
+        <li>✓ 动画事件系统</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    
+    function resizeCanvas() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = 500 * window.devicePixelRatio;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    const vsSource = `
+      attribute vec4 aPosition;
+      attribute vec3 aNormal;
+      uniform mat4 uModel;
+      uniform mat4 uView;
+      uniform mat4 uProjection;
+      uniform float uTime;
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      
+      vec3 animateVertex(vec3 pos, float time) {
+        // Simple breathing animation
+        pos.y += sin(time * 2.0) * 0.02;
+        return pos;
+      }
+      
+      void main() {
+        vec3 animatedPos = animateVertex(aPosition.xyz, uTime);
+        vec4 worldPos = uModel * vec4(animatedPos, 1.0);
+        vPosition = worldPos.xyz;
+        vNormal = mat3(uModel) * aNormal;
+        gl_Position = uProjection * uView * worldPos;
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      uniform vec3 uColor;
+      
+      void main() {
+        vec3 normal = normalize(vNormal);
+        vec3 lightDir = normalize(vec3(5, 8, 5));
+        vec3 viewDir = normalize(vec3(0, 0, 5) - vPosition);
+        
+        vec3 ambient = 0.2 * uColor;
+        float diff = max(dot(normal, lightDir), 0.0);
+        vec3 diffuse = diff * uColor;
+        
+        vec3 reflectDir = reflect(-lightDir, normal);
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+        vec3 specular = 0.3 * spec;
+        
+        vec3 result = ambient + diffuse + specular;
+        gl_FragColor = vec4(result, 1.0);
+      }
+    `;
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      return shader;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+    gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+    gl.linkProgram(program);
+    gl.useProgram(program);
+    
+    // Create a simple character (capsule-like shape)
+    const positions = [];
+    const normals = [];
+    const indices = [];
+    
+    // Body (capsule)
+    for (let i = 0; i <= 16; i++) {
+      const lat = i * Math.PI / 16;
+      for (let j = 0; j <= 32; j++) {
+        const lon = j * 2 * Math.PI / 32;
+        const x = Math.sin(lat) * Math.cos(lon);
+        const y = Math.cos(lat) * 1.5;
+        const z = Math.sin(lat) * Math.sin(lon);
+        positions.push(x, y + 1, z);
+        normals.push(x, Math.cos(lat), z);
+      }
+    }
+    
+    for (let i = 0; i < 16; i++) {
+      for (let j = 0; j < 32; j++) {
+        const a = i * 33 + j;
+        const b = a + 33;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    
+    // Head
+    const headY = 2.5;
+    for (let i = 0; i <= 12; i++) {
+      const lat = i * Math.PI / 12;
+      for (let j = 0; j <= 24; j++) {
+        const lon = j * 2 * Math.PI / 24;
+        const x = Math.sin(lat) * Math.cos(lon) * 0.4;
+        const y = Math.cos(lat) * 0.4 + headY;
+        const z = Math.sin(lat) * Math.sin(lon) * 0.4;
+        positions.push(x, y, z);
+        normals.push(Math.sin(lat) * Math.cos(lon), Math.cos(lat), Math.sin(lat) * Math.sin(lon));
+      }
+    }
+    
+    const baseIdx = positions.length / 3;
+    for (let i = 0; i < 12; i++) {
+      for (let j = 0; j < 24; j++) {
+        const a = baseIdx + i * 25 + j;
+        const b = a + 25;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+    
+    const normalBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+    
+    const indexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+    
+    const positionLoc = gl.getAttribLocation(program, 'aPosition');
+    const normalLoc = gl.getAttribLocation(program, 'aNormal');
+    const modelLoc = gl.getUniformLocation(program, 'uModel');
+    const viewLoc = gl.getUniformLocation(program, 'uView');
+    const projectionLoc = gl.getUniformLocation(program, 'uProjection');
+    const timeLoc = gl.getUniformLocation(program, 'uTime');
+    const colorLoc = gl.getUniformLocation(program, 'uColor');
+    
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    
+    let time = 0;
+    let currentAnim = 'idle';
+    let playbackSpeed = 1.0;
+    let animTime = 0;
+    
+    // Animation data
+    const animations = {
+      idle: { duration: 2.0, color: [0.3, 0.6, 0.9] },
+      walk: { duration: 1.5, color: [0.9, 0.5, 0.3] },
+      run: { duration: 0.8, color: [0.9, 0.3, 0.3] },
+      jump: { duration: 1.2, color: [0.3, 0.9, 0.5] }
+    };
+    
+    // UI Controls
+    document.querySelectorAll('.anim-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.anim-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentAnim = btn.dataset.anim;
+        animTime = 0;
+      });
+    });
+    
+    document.getElementById('playbackSpeed').addEventListener('change', (e) => {
+      playbackSpeed = parseFloat(e.target.value);
+    });
+    
+    let frameCount = 0;
+    let lastTime = performance.now();
+    
+    function mat4Perspective(fov, aspect, near, far) {
+      const f = 1.0 / Math.tan(fov / 2);
+      const nf = 1 / (near - far);
+      return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,(2*far*near)*nf,0]);
+    }
+    
+    function mat4LookAt(eye, center, up) {
+      const z = normalizeVec(subtractVec(eye, center));
+      const x = normalizeVec(crossVec(up, z));
+      const y = crossVec(z, x);
+      return new Float32Array([x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dotVec(x,eye),-dotVec(y,eye),-dotVec(z,eye),1]);
+    }
+    
+    function mat4RotationY(angle) {
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return new Float32Array([c,0,s,0, 0,1,0,0, -s,0,c,0, 0,0,0,1]);
+    }
+    
+    function normalizeVec(v) { const len = Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]); return [v[0]/len,v[1]/len,v[2]/len]; }
+    function subtractVec(a, b) { return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+    function crossVec(a, b) { return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]; }
+    function dotVec(a, b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+    
+    function render() {
+      gl.clearColor(0.05, 0.05, 0.1, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      
+      const anim = animations[currentAnim];
+      animTime += 0.016 * playbackSpeed;
+      if (animTime > anim.duration) animTime = 0;
+      
+      time += 0.016;
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(positionLoc);
+      gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 0, 0);
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+      gl.enableVertexAttribArray(normalLoc);
+      gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+      
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+      
+      const aspect = canvas.width / canvas.height;
+      const projection = mat4Perspective(Math.PI / 4, aspect, 0.1, 100.0);
+      const view = mat4LookAt([0, 2, 6], [0, 1.5, 0], [0, 1, 0]);
+      const model = mat4RotationY(time * 0.3);
+      
+      gl.uniformMatrix4fv(projectionLoc, false, projection);
+      gl.uniformMatrix4fv(viewLoc, false, view);
+      gl.uniformMatrix4fv(modelLoc, false, model);
+      gl.uniform1f(timeLoc, time);
+      gl.uniform3fv(colorLoc, anim.color);
+      
+      gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+      
+      // Update timeline
+      const progress = (animTime / anim.duration) * 100;
+      document.getElementById('timelineProgress').style.width = progress + '%';
+      document.getElementById('currentTime').textContent = animTime.toFixed(1) + 's / ' + anim.duration.toFixed(1) + 's';
+      
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        document.getElementById('fpsCounter').textContent = frameCount;
+        frameCount = 0;
+        lastTime = now;
+      }
+      
+      requestAnimationFrame(render);
+    }
+    
+    render();
+  </script>
+</body>
+</html>

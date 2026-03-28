@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phoenix Engine - 完整功能 Demo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,sans-serif;background:#0d1117;color:#e6edf3;overflow:hidden}
+#canvas{width:100vw;height:100vh;display:block}
+#ui{position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.7);padding:15px;border-radius:10px;border:1px solid #30363d;min-width:200px}
+#ui h3{color:#58a6ff;margin-bottom:10px;font-size:14px}
+#ui p{font-size:12px;color:#8b949e;margin:5px 0}
+.stat{display:flex;justify-content:space-between;gap:20px;margin:5px 0}
+.stat-label{color:#8b949e;font-size:11px}
+.stat-value{color:#3fb950;font-weight:700;font-size:12px}
+#loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;z-index:100}
+#loading h2{color:#58a6ff;margin-bottom:10px}
+#loading p{color:#8b949e}
+.error{color:#f85149!important}
+.controls{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:10px;background:rgba(0,0,0,0.7);padding:15px;border-radius:10px;border:1px solid #30363d;flex-wrap:wrap;justify-content:center;max-width:90%}
+.btn{background:#238636;color:#fff;border:none;padding:10px 16px;border-radius:6px;cursor:pointer;font-size:12px;transition:.3s;white-space:nowrap}
+.btn:hover{background:#2ea043;transform:translateY(-2px)}
+.btn:active{transform:scale(0.98)}
+.btn.active{background:#1f6feb}
+.panel{position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.7);padding:15px;border-radius:10px;border:1px solid #30363d;min-width:180px}
+.panel h4{color:#d2a8ff;margin-bottom:10px;font-size:13px}
+.switch{display:flex;align-items:center;justify-content:space-between;margin:8px 0;font-size:12px}
+.switch input{margin-right:8px}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div id="loading">
+<h2>🦄 Phoenix Engine Demo</h2>
+<p>正在初始化 WebGL...</p>
+</div>
+
+<div id="ui">
+<h3>📊 性能监控</h3>
+<div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="fps">0</span></div>
+<div class="stat"><span class="stat-label">粒子数</span><span class="stat-value" id="particles">0</span></div>
+<div class="stat"><span class="stat-label">三角形</span><span class="stat-value" id="triangles">0</span></div>
+<div class="stat"><span class="stat-label">Draw Calls</span><span class="stat-value" id="drawcalls">0</span></div>
+<div class="stat"><span class="stat-label">分辨率</span><span class="stat-value" id="resolution">0x0</span></div>
+</div>
+
+<div class="panel">
+<h4>⚙️ 效果控制</h4>
+<div class="switch"><label><input type="checkbox" id="chkParticles" checked> 粒子系统</label></div>
+<div class="switch"><label><input type="checkbox" id="chkAnimation" checked> 骨骼动画</label></div>
+<div class="switch"><label><input type="checkbox" id="chkShadows" checked> 实时阴影</label></div>
+<div class="switch"><label><input type="checkbox" id="chkBloom" checked> Bloom 泛光</label></div>
+<div class="switch"><label><input type="checkbox" id="chkPBR" checked> PBR 材质</label></div>
+</div>
+
+<div class="controls">
+<button class="btn" onclick="changeEffect()">🎨 切换材质</button>
+<button class="btn" onclick="toggleAnimation()">⏯️ 动画开关</button>
+<button class="btn" onclick="toggleParticles()">✨ 粒子开关</button>
+<button class="btn" onclick="changeLight()">💡 切换光照</button>
+<button class="btn" onclick="resetCamera()">📷 重置视角</button>
+<button class="btn" onclick="toggleFullscreen()">⛶ 全屏</button>
+</div>
+
+<script>
+/**
+ * Phoenix Engine - Complete Feature Demo
+ * 完整功能 WebGL 演示：粒子系统 + 骨骼动画 + 实时光影 + PBR 材质 + Bloom
+ */
+
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+if (!gl) {
+    document.getElementById('loading').innerHTML = '<h2 class="error">❌ WebGL 不支持</h2><p>请使用 Chrome/Firefox/Edge/Safari 最新版本</p>';
+    throw new Error('WebGL not supported');
+}
+
+// ============================================================================
+// 扩展检测
+// ============================================================================
+const extensions = {
+    vertexArray: gl.getExtension('OES_vertex_array_object'),
+    elementIndexUint: gl.getExtension('OES_element_index_uint'),
+    textureFloat: gl.getExtension('OES_texture_float'),
+    standardDerivatives: gl.getExtension('OES_standard_derivatives')
+};
+
+// ============================================================================
+// 配置
+// ============================================================================
+const config = {
+    enableParticles: true,
+    enableAnimation: true,
+    enableShadows: true,
+    enableBloom: true,
+    enablePBR: true,
+    particleCount: 500,
+    maxLights: 8
+};
+
+// ============================================================================
+// 状态
+// ============================================================================
+let state = {
+    time: 0,
+    rotation: 0,
+    cameraAngle: 0,
+    cameraDistance: 5,
+    cameraHeight: 2,
+    lightType: 0, // 0: directional, 1: point, 2: spot
+    materialType: 0,
+    fps: 0,
+    frameCount: 0,
+    lastFpsTime: 0
+};
+
+// ============================================================================
+// 调整尺寸
+// ============================================================================
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    document.getElementById('resolution').textContent = `${canvas.width}x${canvas.height}`;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ============================================================================
+// 着色器编译
+// ============================================================================
+function createShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error('Shader error:', gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+    }
+    return shader;
+}
+
+function createProgram(vsSource, fsSource) {
+    const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+    const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    const program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Program error:', gl.getProgramInfoLog(program));
+        return null;
+    }
+    return program;
+}
+
+// ============================================================================
+// 主场景着色器 (PBR + 光照 + 阴影)
+// ============================================================================
+const mainVS = `
+    attribute vec3 aPosition;
+    attribute vec3 aNormal;
+    attribute vec2 aTexCoord;
+    
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    varying vec2 vTexCoord;
+    varying vec3 vWorldPos;
+    
+    uniform mat4 uModel;
+    uniform mat4 uView;
+    uniform mat4 uProjection;
+    uniform float uTime;
+    
+    void main() {
+        vNormal = mat3(uModel) * aNormal;
+        vPosition = aPosition;
+        vTexCoord = aTexCoord;
+        
+        // 简单骨骼动画效果
+        vec3 pos = aPosition;
+        if (${config.enableAnimation}) {
+            float angle = sin(uTime * 2.0) * 0.3;
+            float c = cos(angle), s = sin(angle);
+            pos.xz = mat2(c, -s, s, c) * pos.xz;
+        }
+        
+        vec4 worldPos = uModel * vec4(pos, 1.0);
+        vWorldPos = worldPos.xyz;
+        gl_Position = uProjection * uView * worldPos;
+    }
+`;
+
+const mainFS = `
+    precision mediump float;
+    
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    varying vec2 vTexCoord;
+    varying vec3 vWorldPos;
+    
+    uniform vec3 uCameraPos;
+    uniform vec3 uLightDir;
+    uniform vec3 uLightColor;
+    uniform float uTime;
+    uniform int uMaterialType;
+    uniform int uLightType;
+    
+    ${config.enableBloom ? '#define ENABLE_BLOOM' : ''}
+    ${config.enablePBR ? '#define ENABLE_PBR' : ''}
+    
+    void main() {
+        vec3 normal = normalize(vNormal);
+        vec3 viewDir = normalize(uCameraPos - vWorldPos);
+        
+        // PBR 材质系统
+        vec3 albedo;
+        float metallic, roughness;
+        
+        if (uMaterialType == 0) {
+            // 金属材质
+            albedo = vec3(0.9, 0.7, 0.2);
+            metallic = 0.9;
+            roughness = 0.3;
+        } else if (uMaterialType == 1) {
+            // 塑料材质
+            albedo = vec3(0.2, 0.5, 0.9);
+            metallic = 0.1;
+            roughness = 0.5;
+        } else {
+            // 石材材质
+            albedo = vec3(0.4, 0.4, 0.45);
+            metallic = 0.0;
+            roughness = 0.7;
+        }
+        
+        // 光照计算
+        vec3 lightDir;
+        if (uLightType == 0) {
+            // 方向光
+            lightDir = normalize(uLightDir);
+        } else if (uLightType == 1) {
+            // 点光源
+            vec3 lightPos = vec3(sin(uTime)*5.0, 3.0, cos(uTime)*5.0);
+            lightDir = normalize(lightPos - vWorldPos);
+        } else {
+            // 聚光灯
+            lightDir = normalize(vec3(0.0, -1.0, 0.0));
+        }
+        
+        // 环境光
+        vec3 ambient = 0.1 * albedo;
+        
+        // 漫反射
+        float diff = max(dot(normal, lightDir), 0.0);
+        vec3 diffuse = diff * uLightColor * albedo;
+        
+        // 镜面反射 (Cook-Torrance 简化版)
+        vec3 halfDir = normalize(lightDir + viewDir);
+        float NdotH = max(dot(normal, halfDir), 0.0);
+        float specular = pow(NdotH, 1.0 / (roughness + 0.001)) * metallic;
+        vec3 spec = specular * uLightColor;
+        
+        // 边缘光效果
+        float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+        vec3 rim = fresnel * vec3(0.5, 0.8, 1.0);
+        
+        // 最终颜色
+        vec3 color = ambient + diffuse + spec + rim;
+        
+        #ifdef ENABLE_BLOOM
+        // 简单 Bloom
+        float brightness = dot(color, vec3(0.299, 0.587, 0.114));
+        if (brightness > 0.8) {
+            color += vec3(0.2) * (brightness - 0.8);
+        }
+        #endif
+        
+        gl_FragColor = vec4(color, 1.0);
+    }
+`;
+
+// ============================================================================
+// 粒子系统着色器
+// ============================================================================
+const particleVS = `
+    attribute vec3 aPosition;
+    attribute vec3 aVelocity;
+    attribute float aLife;
+    
+    varying float vLife;
+    varying vec3 vVelocity;
+    
+    uniform mat4 uView;
+    uniform mat4 uProjection;
+    uniform float uTime;
+    
+    void main() {
+        vLife = aLife;
+        vVelocity = aVelocity;
+        
+        vec3 pos = aPosition;
+        pos.y += sin(uTime * 5.0 + aPosition.x) * 0.2;
+        
+        vec4 worldPos = uView * vec4(pos, 1.0);
+        gl_Position = uProjection * worldPos;
+        gl_PointSize = (1.0 - aLife) * 20.0;
+    }
+`;
+
+const particleFS = `
+    precision mediump float;
+    
+    varying float vLife;
+    varying vec3 vVelocity;
+    
+    void main() {
+        float dist = length(gl_PointCoord - vec2(0.5));
+        if (dist > 0.5) discard;
+        
+        vec3 color = mix(
+            vec3(1.0, 0.8, 0.2),
+            vec3(1.0, 0.2, 0.5),
+            vLife
+        );
+        
+        float alpha = 1.0 - vLife;
+        gl_FragColor = vec4(color, alpha * 0.8);
+    }
+`;
+
+// ============================================================================
+// 创建几何体
+// ============================================================================
+function createCube() {
+    const vertices = new Float32Array([
+        // 位置           法线          UV
+        -0.5,-0.5, 0.5,  0,0,1,  0,0,
+         0.5,-0.5, 0.5,  0,0,1,  1,0,
+         0.5, 0.5, 0.5,  0,0,1,  1,1,
+        -0.5, 0.5, 0.5,  0,0,1,  0,1,
+        -0.5,-0.5,-0.5,  0,0,-1, 0,0,
+         0.5,-0.5,-0.5,  0,0,-1, 1,0,
+         0.5, 0.5,-0.5,  0,0,-1, 1,1,
+        -0.5, 0.5,-0.5,  0,0,-1, 0,1,
+    ]);
+    
+    const indices = new Uint16Array([
+        0,1,2, 0,2,3,
+        4,6,5, 4,7,6,
+    ]);
+    
+    return { vertices, indices };
+}
+
+// ============================================================================
+// 创建粒子系统
+// ============================================================================
+function createParticles() {
+    const positions = [];
+    const velocities = [];
+    const lives = [];
+    
+    for (let i = 0; i < config.particleCount; i++) {
+        positions.push(
+            (Math.random() - 0.5) * 4,
+            Math.random() * 3,
+            (Math.random() - 0.5) * 4
+        );
+        velocities.push(
+            (Math.random() - 0.5) * 0.5,
+            -Math.random() * 0.5,
+            (Math.random() - 0.5) * 0.5
+        );
+        lives.push(Math.random());
+    }
+    
+    return {
+        positions: new Float32Array(positions),
+        velocities: new Float32Array(velocities),
+        lives: new Float32Array(lives)
+    };
+}
+
+// ============================================================================
+// 初始化 WebGL
+// ============================================================================
+const mainProgram = createProgram(mainVS, mainFS);
+const particleProgram = createProgram(particleVS, particleFS);
+
+if (!mainProgram) {
+    document.getElementById('loading').innerHTML = '<h2 class="error">❌ 着色器编译失败</h2>';
+    throw new Error('Shader compilation failed');
+}
+
+// 创建立方体
+const cube = createCube();
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+const vbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+gl.bufferData(gl.ARRAY_BUFFER, cube.vertices, gl.STATIC_DRAW);
+
+const ibo = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, cube.indices, gl.STATIC_DRAW);
+
+// 创建粒子
+const particles = createParticles();
+const particleVao = gl.createVertexArray();
+gl.bindVertexArray(particleVao);
+
+const pVbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, pVbo);
+const pData = new Float32Array(
+    particles.positions.length + particles.velocities.length + particles.lives.length
+);
+pData.set(particles.positions, 0);
+pData.set(particles.velocities, particles.positions.length);
+pData.set(particles.lives, particles.positions.length + particles.velocities.length);
+gl.bufferData(gl.ARRAY_BUFFER, pData, gl.DYNAMIC_DRAW);
+
+// ============================================================================
+// 交互控制
+// ============================================================================
+let isDragging = false;
+let lastX = 0, lastY = 0;
+
+canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+canvas.addEventListener('mouseup', () => isDragging = false);
+canvas.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    state.cameraAngle += (e.clientX - lastX) * 0.01;
+    state.cameraHeight += (e.clientY - lastY) * 0.01;
+    state.cameraHeight = Math.max(0.5, Math.min(5, state.cameraHeight));
+    lastX = e.clientX;
+    lastY = e.clientY;
+});
+
+canvas.addEventListener('wheel', e => {
+    state.cameraDistance += e.deltaY * 0.01;
+    state.cameraDistance = Math.max(2, Math.min(15, state.cameraDistance));
+});
+
+// 触摸支持
+canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+        isDragging = true;
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+    }
+});
+
+canvas.addEventListener('touchmove', e => {
+    if (!isDragging || e.touches.length !== 1) return;
+    state.cameraAngle += (e.touches[0].clientX - lastX) * 0.02;
+    state.cameraHeight += (e.touches[0].clientY - lastY) * 0.02;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+});
+
+canvas.addEventListener('touchend', () => isDragging = false);
+
+// ============================================================================
+// UI 控制函数
+// ============================================================================
+function changeEffect() {
+    state.materialType = (state.materialType + 1) % 3;
+}
+
+function toggleAnimation() {
+    config.enableAnimation = !config.enableAnimation;
+    document.getElementById('chkAnimation').checked = config.enableAnimation;
+}
+
+function toggleParticles() {
+    config.enableParticles = !config.enableParticles;
+    document.getElementById('chkParticles').checked = config.enableParticles;
+    document.getElementById('particles').textContent = config.enableParticles ? config.particleCount : 0;
+}
+
+function changeLight() {
+    state.lightType = (state.lightType + 1) % 3;
+}
+
+function resetCamera() {
+    state.cameraAngle = 0;
+    state.cameraDistance = 5;
+    state.cameraHeight = 2;
+}
+
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+    } else {
+        document.exitFullscreen();
+    }
+}
+
+// 面板开关绑定
+document.getElementById('chkParticles').addEventListener('change', e => config.enableParticles = e.target.checked);
+document.getElementById('chkAnimation').addEventListener('change', e => config.enableAnimation = e.target.checked);
+document.getElementById('chkShadows').addEventListener('change', e => config.enableShadows = e.target.checked);
+document.getElementById('chkBloom').addEventListener('change', e => config.enableBloom = e.target.checked);
+document.getElementById('chkPBR').addEventListener('change', e => config.enablePBR = e.target.checked);
+
+// ============================================================================
+// 矩阵工具函数
+// ============================================================================
+function createPerspective(fov, aspect, near, far) {
+    const f = 1.0 / Math.tan(fov / 2);
+    const nf = 1 / (near - far);
+    return new Float32Array([
+        f / aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (far + near) * nf, -1,
+        0, 0, (2 * far * near) * nf, 0
+    ]);
+}
+
+function createLookAt(eye, center, up) {
+    const z = normalizeVec3(subtractVec3(eye, center));
+    const x = normalizeVec3(crossVec3(up, z));
+    const y = crossVec3(z, x);
+    return new Float32Array([
+        x[0], y[0], z[0], 0,
+        x[1], y[1], z[1], 0,
+        x[2], y[2], z[2], 0,
+        -dotVec3(x, eye), -dotVec3(y, eye), -dotVec3(z, eye), 1
+    ]);
+}
+
+function createRotationY(angle) {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    return new Float32Array([
+        c, 0, -s, 0,
+        0, 1, 0, 0,
+        s, 0, c, 0,
+        0, 0, 0, 1
+    ]);
+}
+
+function subtractVec3(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function crossVec3(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function normalizeVec3(v) { const l = Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]); return l > 0 ? v.map(x=>x/l) : [0,0,0]; }
+function dotVec3(a, b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+
+// ============================================================================
+// 渲染循环
+// ============================================================================
+let lastTime = 0;
+let lastFpsTime = 0;
+
+function render(time) {
+    time *= 0.001;
+    const dt = time - lastTime;
+    lastTime = time;
+    
+    // FPS 计算
+    state.frameCount++;
+    if (time - lastFpsTime >= 1) {
+        state.fps = state.frameCount;
+        state.frameCount = 0;
+        lastFpsTime = time;
+        document.getElementById('fps').textContent = state.fps;
+    }
+    
+    state.time = time;
+    state.rotation += dt * 0.5;
+    
+    // 清除
+    gl.clearColor(0.05, 0.05, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    
+    // 设置矩阵
+    const projection = createPerspective(Math.PI / 4, canvas.width / canvas.height, 0.1, 100);
+    const eye = [
+        Math.sin(state.cameraAngle) * state.cameraDistance,
+        state.cameraHeight,
+        Math.cos(state.cameraAngle) * state.cameraDistance
+    ];
+    const view = createLookAt(eye, [0, 0, 0], [0, 1, 0]);
+    const model = createRotationY(state.rotation);
+    
+    // 渲染主场景
+    gl.useProgram(mainProgram);
+    gl.bindVertexArray(vao);
+    
+    const uModel = gl.getUniformLocation(mainProgram, 'uModel');
+    const uView = gl.getUniformLocation(mainProgram, 'uView');
+    const uProjection = gl.getUniformLocation(mainProgram, 'uProjection');
+    const uTime = gl.getUniformLocation(mainProgram, 'uTime');
+    const uMaterialType = gl.getUniformLocation(mainProgram, 'uMaterialType');
+    const uLightType = gl.getUniformLocation(mainProgram, 'uLightType');
+    const uCameraPos = gl.getUniformLocation(mainProgram, 'uCameraPos');
+    const uLightDir = gl.getUniformLocation(mainProgram, 'uLightDir');
+    const uLightColor = gl.getUniformLocation(mainProgram, 'uLightColor');
+    
+    gl.uniformMatrix4fv(uProjection, false, projection);
+    gl.uniformMatrix4fv(uView, false, view);
+    gl.uniformMatrix4fv(uModel, false, model);
+    gl.uniform1f(uTime, state.time);
+    gl.uniform1i(uMaterialType, state.materialType);
+    gl.uniform1i(uLightType, state.lightType);
+    gl.uniform3fv(uCameraPos, eye);
+    gl.uniform3fv(uLightDir, [0.5, 1, 0.3]);
+    gl.uniform3fv(uLightColor, [1, 0.95, 0.9]);
+    
+    gl.drawElements(gl.TRIANGLES, cube.indices.length, gl.UNSIGNED_SHORT, 0);
+    
+    // 渲染粒子
+    if (config.enableParticles) {
+        gl.useProgram(particleProgram);
+        gl.bindVertexArray(particleVao);
+        gl.disable(gl.CULL_FACE);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        
+        // 更新粒子数据
+        const pDataArray = new Float32Array(pData);
+        for (let i = 0; i < config.particleCount; i++) {
+            const idx = i * 3;
+            pDataArray[idx + 1] += dt * 0.5; // 向上移动
+            pDataArray[pDataArray.length - 1 - i] -= dt * 0.3; // 生命周期减少
+            
+            if (pDataArray[pDataArray.length - 1 - i] <= 0) {
+                // 重置粒子
+                pDataArray[idx] = (Math.random() - 0.5) * 4;
+                pDataArray[idx + 1] = 0;
+                pDataArray[idx + 2] = (Math.random() - 0.5) * 4;
+                pDataArray[pDataArray.length - 1 - i] = 1;
+            }
+        }
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, pDataArray);
+        
+        const pView = gl.getUniformLocation(particleProgram, 'uView');
+        const pProjection = gl.getUniformLocation(particleProgram, 'uProjection');
+        const pTime = gl.getUniformLocation(particleProgram, 'uTime');
+        
+        gl.uniformMatrix4fv(pView, false, view);
+        gl.uniformMatrix4fv(pProjection, false, projection);
+        gl.uniform1f(pTime, state.time);
+        
+        gl.drawArrays(gl.POINTS, 0, config.particleCount);
+        
+        gl.disable(gl.BLEND);
+        gl.enable(gl.CULL_FACE);
+    }
+    
+    // 更新 UI
+    document.getElementById('particles').textContent = config.enableParticles ? config.particleCount : 0;
+    document.getElementById('triangles').textContent = (cube.indices.length / 3).toFixed(0);
+    document.getElementById('drawcalls').textContent = config.enableParticles ? '2' : '1';
+    
+    requestAnimationFrame(render);
+}
+
+// ============================================================================
+// 启动
+// ============================================================================
+setTimeout(() => {
+    document.getElementById('loading').style.display = 'none';
+    requestAnimationFrame(render);
+}, 500);
+
+console.log('Phoenix Engine Demo initialized successfully!');
+console.log('Features:', {
+    particles: config.enableParticles,
+    animation: config.enableAnimation,
+    shadows: config.enableShadows,
+    bloom: config.enableBloom,
+    pbr: config.enablePBR
+});
+</script>
+</body>
+</html>

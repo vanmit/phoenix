@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">
+  <defs>
+    <linearGradient id="perfGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2ec4b6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a9988;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect fill="url(#perfGrad)" width="400" height="200"/>
+  <rect x="50" y="100" width="30" height="80" fill="#44ddcc" opacity="0.9"/>
+  <rect x="90" y="80" width="30" height="100" fill="#44ddcc" opacity="0.85"/>
+  <rect x="130" y="60" width="30" height="120" fill="#44ddcc" opacity="0.8"/>
+  <rect x="170" y="70" width="30" height="110" fill="#44ddcc" opacity="0.75"/>
+  <rect x="210" y="90" width="30" height="90" fill="#44ddcc" opacity="0.7"/>
+  <rect x="250" y="50" width="30" height="130" fill="#44ddcc" opacity="0.65"/>
+  <rect x="290" y="80" width="30" height="100" fill="#44ddcc" opacity="0.6"/>
+  <rect x="330" y="100" width="30" height="80" fill="#44ddcc" opacity="0.55"/>
+  <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-size="20" fill="white" font-weight="bold">⚡ 性能测试</text>
+  <text x="50%" y="75%" dominant-baseline="middle" text-anchor="middle" font-size="14" fill="white" opacity="0.8">10,000 物体</text>
+</svg>

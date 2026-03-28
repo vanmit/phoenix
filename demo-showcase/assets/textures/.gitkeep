@@ -1,0 +1,14 @@
+# Textures Directory
+
+Place PBR texture sets here:
+- albedo.jpg (or baseColor)
+- normal.jpg
+- roughness.jpg
+- metallic.jpg
+- ao.jpg (ambient occlusion)
+- height.jpg (displacement)
+
+Recommended formats:
+- WebP for mobile (smaller size)
+- KTX2 with BasisU for GPU compression
+- ASTC for iOS, ETC2 for Android

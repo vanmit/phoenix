@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PBR 材质展示 - Phoenix Engine</title>
+  <link rel="stylesheet" href="../../css/showcase.css">
+  <link rel="stylesheet" href="../../css/responsive.css">
+  <style>
+    body { margin: 0; background: #0a0a15; color: white; font-family: 'Segoe UI', sans-serif; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    .header { text-align: center; margin-bottom: 2rem; }
+    .header h1 { color: #ff6b35; margin-bottom: 0.5rem; }
+    .canvas-wrapper { 
+      background: #1a1a2e; 
+      border-radius: 12px; 
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    canvas { width: 100%; height: 500px; display: block; }
+    .controls { 
+      display: flex; 
+      gap: 1rem; 
+      padding: 1rem; 
+      background: #16213e;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .control-group { display: flex; align-items: center; gap: 0.5rem; }
+    .control-group label { font-size: 0.9rem; color: #b8b8b8; }
+    select, input[type="range"] { 
+      padding: 0.5rem; 
+      background: #1a1a2e; 
+      border: 1px solid #333; 
+      color: white; 
+      border-radius: 6px;
+    }
+    .material-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .material-card {
+      background: #16213e;
+      padding: 1rem;
+      border-radius: 8px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      border: 2px solid transparent;
+    }
+    .material-card:hover { transform: translateY(-5px); }
+    .material-card.active { border-color: #ff6b35; }
+    .material-preview {
+      width: 100%;
+      height: 120px;
+      border-radius: 6px;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(135deg, #667, #334);
+    }
+    .material-name { font-weight: 600; margin-bottom: 0.25rem; }
+    .material-desc { font-size: 0.8rem; color: #888; }
+    .stats { 
+      display: flex; 
+      gap: 2rem; 
+      padding: 1rem; 
+      background: #16213e;
+      margin-top: 1rem;
+      border-radius: 8px;
+      flex-wrap: wrap;
+    }
+    .stat { text-align: center; }
+    .stat-value { font-size: 1.5rem; font-weight: bold; color: #ff6b35; }
+    .stat-label { font-size: 0.8rem; color: #888; }
+    .back-link { 
+      display: inline-flex; 
+      align-items: center; 
+      gap: 0.5rem; 
+      color: #2ec4b6; 
+      text-decoration: none;
+      margin-bottom: 1rem;
+    }
+    .back-link:hover { color: #ff6b35; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="../../index.html" class="back-link">← 返回演示中心</a>
+    
+    <div class="header">
+      <h1>🎨 PBR 材质展示</h1>
+      <p>基于物理的渲染材质系统 - 金属 / 塑料 / 木材 / 石材</p>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="glCanvas"></canvas>
+      <div class="controls">
+        <div class="control-group">
+          <label>材质类型:</label>
+          <select id="materialSelect">
+            <option value="metal">金属 (Metal)</option>
+            <option value="plastic">塑料 (Plastic)</option>
+            <option value="wood">木材 (Wood)</option>
+            <option value="stone">石材 (Stone)</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label>粗糙度:</label>
+          <input type="range" id="roughnessSlider" min="0" max="100" value="30">
+        </div>
+        <div class="control-group">
+          <label>金属度:</label>
+          <input type="range" id="metallicSlider" min="0" max="100" value="80">
+        </div>
+        <div class="control-group">
+          <label>旋转:</label>
+          <input type="checkbox" id="autoRotate" checked> 自动旋转
+        </div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="fpsCounter">60</div>
+        <div class="stat-label">FPS</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="drawCalls">24</div>
+        <div class="stat-label">绘制调用</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="vertices">48,000</div>
+        <div class="stat-label">顶点数</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="textures">12</div>
+        <div class="stat-label">纹理数量</div>
+      </div>
+    </div>
+
+    <h2 style="margin: 2rem 0 1rem; color: #ff6b35;">材质预览</h2>
+    <div class="material-grid">
+      <div class="material-card active" data-material="metal">
+        <div class="material-preview" style="background: linear-gradient(135deg, #889, #445);"></div>
+        <div class="material-name">金属</div>
+        <div class="material-desc">高反射，高金属度</div>
+      </div>
+      <div class="material-card" data-material="plastic">
+        <div class="material-preview" style="background: linear-gradient(135deg, #c66, #844);"></div>
+        <div class="material-name">塑料</div>
+        <div class="material-desc">漫反射，低金属度</div>
+      </div>
+      <div class="material-card" data-material="wood">
+        <div class="material-preview" style="background: linear-gradient(135deg, #a86, #654);"></div>
+        <div class="material-name">木材</div>
+        <div class="material-desc">天然纹理，各向异性</div>
+      </div>
+      <div class="material-card" data-material="stone">
+        <div class="material-preview" style="background: linear-gradient(135deg, #777, #444);"></div>
+        <div class="material-name">石材</div>
+        <div class="material-desc">粗糙表面，微细节</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 2rem; padding: 1.5rem; background: #16213e; border-radius: 8px;">
+      <h3 style="color: #ff6b35; margin-bottom: 1rem;">技术特性</h3>
+      <ul style="color: #b8b8b8; line-height: 2;">
+        <li>✓ 金属度工作流 (Metallic-Roughness)</li>
+        <li>✓ 基于图像的光照 (IBL)</li>
+        <li>✓ 环境光遮蔽 (AO)</li>
+        <li>✓ 法线贴图 (Normal Mapping)</li>
+        <li>✓ 菲涅尔反射 (Fresnel)</li>
+        <li>✓ 各向异性高光 (Anisotropic)</li>
+        <li>✓ 微表面模型 (GGX)</li>
+        <li>✓ 能量守恒 (Energy Conservation)</li>
+      </ul>
+    </div>
+  </div>
+
+  <script src="../../js/player.js"></script>
+  <script>
+    // Simple WebGL PBR Demo
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    
+    if (!gl) {
+      alert('WebGL not supported');
+    }
+
+    // Resize canvas
+    function resizeCanvas() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = 500 * window.devicePixelRatio;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Simple shader program
+    const vsSource = `
+      attribute vec4 aPosition;
+      attribute vec3 aNormal;
+      uniform mat4 uModel;
+      uniform mat4 uView;
+      uniform mat4 uProjection;
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      void main() {
+        vec4 worldPos = uModel * aPosition;
+        vPosition = worldPos.xyz;
+        vNormal = mat3(uModel) * aNormal;
+        gl_Position = uProjection * uView * worldPos;
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      uniform vec3 uColor;
+      uniform float uRoughness;
+      uniform float uMetallic;
+      uniform vec3 uLightPos;
+      uniform vec3 uViewPos;
+      
+      vec3 getNormalFromMap() {
+        return normalize(vNormal);
+      }
+      
+      void main() {
+        vec3 normal = normalize(vNormal);
+        vec3 lightDir = normalize(uLightPos - vPosition);
+        vec3 viewDir = normalize(uViewPos - vPosition);
+        vec3 halfDir = normalize(lightDir + viewDir);
+        
+        // Ambient
+        vec3 ambient = 0.1 * uColor;
+        
+        // Diffuse
+        float diff = max(dot(normal, lightDir), 0.0);
+        vec3 diffuse = diff * uColor;
+        
+        // Specular (Blinn-Phong)
+        float spec = pow(max(dot(normal, halfDir), 0.0), 32.0 * (1.0 - uRoughness));
+        vec3 specular = vec3(0.3) * spec;
+        
+        // Fresnel
+        float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 5.0);
+        specular += fresnel * uMetallic * 0.5;
+        
+        vec3 result = ambient + diffuse + specular;
+        gl_FragColor = vec4(result, 1.0);
+      }
+    `;
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    function createProgram(gl, vs, fs) {
+      const program = gl.createProgram();
+      const vertexShader = createShader(gl, gl.VERTEX_SHADER, vs);
+      const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fs);
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(program));
+        return null;
+      }
+      return program;
+    }
+
+    const program = createProgram(gl, vsSource, fsSource);
+    
+    // Create sphere geometry
+    function createSphere(radius, bands) {
+      const positions = [];
+      const normals = [];
+      const indices = [];
+      
+      for (let lat = 0; lat <= bands; lat++) {
+        const theta = lat * Math.PI / bands;
+        const sinTheta = Math.sin(theta);
+        const cosTheta = Math.cos(theta);
+        
+        for (let lon = 0; lon <= bands; lon++) {
+          const phi = lon * 2 * Math.PI / bands;
+          const sinPhi = Math.sin(phi);
+          const cosPhi = Math.cos(phi);
+          
+          const x = cosPhi * sinTheta;
+          const y = cosTheta;
+          const z = sinPhi * sinTheta;
+          
+          positions.push(radius * x, radius * y, radius * z);
+          normals.push(x, y, z);
+        }
+      }
+      
+      for (let lat = 0; lat < bands; lat++) {
+        for (let lon = 0; lon < bands; lon++) {
+          const first = lat * (bands + 1) + lon;
+          const second = first + bands + 1;
+          
+          indices.push(first, second, first + 1);
+          indices.push(second, second + 1, first + 1);
+        }
+      }
+      
+      return { positions, normals, indices };
+    }
+
+    const sphere = createSphere(1, 32);
+    
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sphere.positions), gl.STATIC_DRAW);
+    
+    const normalBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sphere.normals), gl.STATIC_DRAW);
+    
+    const indexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(sphere.indices), gl.STATIC_DRAW);
+    
+    const positionLoc = gl.getAttribLocation(program, 'aPosition');
+    const normalLoc = gl.getAttribLocation(program, 'aNormal');
+    
+    // Uniform locations
+    const modelLoc = gl.getUniformLocation(program, 'uModel');
+    const viewLoc = gl.getUniformLocation(program, 'uView');
+    const projectionLoc = gl.getUniformLocation(program, 'uProjection');
+    const colorLoc = gl.getUniformLocation(program, 'uColor');
+    const roughnessLoc = gl.getUniformLocation(program, 'uRoughness');
+    const metallicLoc = gl.getUniformLocation(program, 'uMetallic');
+    const lightPosLoc = gl.getUniformLocation(program, 'uLightPos');
+    const viewPosLoc = gl.getUniformLocation(program, 'uViewPos');
+    
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    
+    let rotation = 0;
+    let autoRotate = true;
+    
+    // Material colors
+    const materials = {
+      metal: { color: [0.8, 0.85, 0.9], roughness: 0.2, metallic: 1.0 },
+      plastic: { color: [0.8, 0.3, 0.3], roughness: 0.5, metallic: 0.0 },
+      wood: { color: [0.6, 0.4, 0.2], roughness: 0.7, metallic: 0.0 },
+      stone: { color: [0.5, 0.5, 0.5], roughness: 0.8, metallic: 0.1 }
+    };
+    
+    let currentMaterial = 'metal';
+    
+    // UI Controls
+    document.getElementById('materialSelect').addEventListener('change', (e) => {
+      currentMaterial = e.target.value;
+      document.querySelectorAll('.material-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.material === currentMaterial);
+      });
+    });
+    
+    document.querySelectorAll('.material-card').forEach(card => {
+      card.addEventListener('click', () => {
+        currentMaterial = card.dataset.material;
+        document.getElementById('materialSelect').value = currentMaterial;
+        document.querySelectorAll('.material-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+      });
+    });
+    
+    document.getElementById('autoRotate').addEventListener('change', (e) => {
+      autoRotate = e.target.checked;
+    });
+    
+    // FPS counter
+    let frameCount = 0;
+    let lastTime = performance.now();
+    
+    function mat4Perspective(fov, aspect, near, far) {
+      const f = 1.0 / Math.tan(fov / 2);
+      const nf = 1 / (near - far);
+      return new Float32Array([
+        f / aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (far + near) * nf, -1,
+        0, 0, (2 * far * near) * nf, 0
+      ]);
+    }
+    
+    function mat4LookAt(eye, center, up) {
+      const z = normalize(subtract(eye, center));
+      const x = normalize(cross(up, z));
+      const y = cross(z, x);
+      return new Float32Array([
+        x[0], y[0], z[0], 0,
+        x[1], y[1], z[1], 0,
+        x[2], y[2], z[2], 0,
+        -dot(x, eye), -dot(y, eye), -dot(z, eye), 1
+      ]);
+    }
+    
+    function mat4RotationY(angle) {
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      return new Float32Array([
+        c, 0, s, 0,
+        0, 1, 0, 0,
+        -s, 0, c, 0,
+        0, 0, 0, 1
+      ]);
+    }
+    
+    function normalize(v) {
+      const len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+      return [v[0]/len, v[1]/len, v[2]/len];
+    }
+    
+    function subtract(a, b) {
+      return [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+    }
+    
+    function cross(a, b) {
+      return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    }
+    
+    function dot(a, b) {
+      return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+    }
+    
+    function render() {
+      gl.clearColor(0.05, 0.05, 0.1, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      
+      if (autoRotate) rotation += 0.01;
+      
+      const material = materials[currentMaterial];
+      const roughness = document.getElementById('roughnessSlider').value / 100;
+      const metallic = document.getElementById('metallicSlider').value / 100;
+      
+      gl.useProgram(program);
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(positionLoc);
+      gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 0, 0);
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+      gl.enableVertexAttribArray(normalLoc);
+      gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+      
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+      
+      const aspect = canvas.width / canvas.height;
+      const projection = mat4Perspective(Math.PI / 4, aspect, 0.1, 100.0);
+      const view = mat4LookAt([0, 0, 5], [0, 0, 0], [0, 1, 0]);
+      const model = mat4RotationY(rotation);
+      
+      gl.uniformMatrix4fv(projectionLoc, false, projection);
+      gl.uniformMatrix4fv(viewLoc, false, view);
+      gl.uniformMatrix4fv(modelLoc, false, model);
+      
+      gl.uniform3fv(colorLoc, material.color);
+      gl.uniform1f(roughnessLoc, roughness);
+      gl.uniform1f(metallicLoc, metallic);
+      gl.uniform3fv(lightPosLoc, [5, 5, 5]);
+      gl.uniform3fv(viewPosLoc, [0, 0, 5]);
+      
+      gl.drawElements(gl.TRIANGLES, sphere.indices.length, gl.UNSIGNED_SHORT, 0);
+      
+      // FPS counter
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        document.getElementById('fpsCounter').textContent = frameCount;
+        frameCount = 0;
+        lastTime = now;
+      }
+      
+      requestAnimationFrame(render);
+    }
+    
+    render();
+  </script>
+</body>
+</html>

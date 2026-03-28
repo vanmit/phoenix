@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phoenix Engine - 演示中心</title>
+    <style>
+        :root {
+            --primary: #ff6b35;
+            --secondary: #004e89;
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --text-light: #ffffff;
+            --text-dim: #a0a0a0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--bg-dark) 0%, var(--secondary) 100%);
+            padding: 3rem 2rem;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--primary), #ff8c5a);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 1.125rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 4px;
+            height: 24px;
+            background: var(--primary);
+            border-radius: 2px;
+        }
+
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 2rem;
+            margin-bottom: 4rem;
+        }
+
+        .demo-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .demo-card:hover {
+            transform: translateY(-8px);
+            border-color: var(--primary);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+
+        .card-preview {
+            height: 200px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card-preview::before {
+            content: '';
+            position: absolute;
+            width: 150%;
+            height: 150%;
+            background: radial-gradient(circle, rgba(255,107,53,0.1) 0%, transparent 70%);
+            animation: pulse 4s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+
+        .preview-icon {
+            font-size: 4rem;
+            z-index: 1;
+        }
+
+        .card-content {
+            padding: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .card-desc {
+            color: var(--text-dim);
+            font-size: 0.9375rem;
+            line-height: 1.5;
+            margin-bottom: 1rem;
+        }
+
+        .card-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tag {
+            background: rgba(255,107,53,0.1);
+            color: var(--primary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .card-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: gap 0.2s ease;
+        }
+
+        .card-link:hover {
+            gap: 0.75rem;
+        }
+
+        .features-section {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 4rem;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .feature-item {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(255,107,53,0.1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .feature-text h3 {
+            font-size: 1.125rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-text p {
+            color: var(--text-dim);
+            font-size: 0.9375rem;
+            line-height: 1.5;
+        }
+
+        .stats-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2rem;
+            margin-bottom: 4rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            padding: 2rem;
+            border-radius: 16px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .stat-value {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), #ff8c5a);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: var(--text-dim);
+            font-size: 1rem;
+        }
+
+        .footer {
+            background: var(--bg-card);
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .footer-text {
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        .footer-links a:hover {
+            color: var(--primary);
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 2rem; }
+            .demo-grid { grid-template-columns: 1fr; }
+            .features-grid { grid-template-columns: 1fr; }
+            .stats-section { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <svg class="logo" viewBox="0 0 100 100">
+            <path d="M50 10 L60 30 L80 30 L65 45 L70 65 L50 55 L30 65 L35 45 L20 30 L40 30 Z" fill="#ff6b35"/>
+        </svg>
+        <h1>Phoenix Engine</h1>
+        <p class="subtitle">高性能 WebAssembly 3D 渲染引擎</p>
+    </header>
+
+    <main class="container">
+        <section>
+            <h2 class="section-title">演示项目</h2>
+            <div class="demo-grid">
+                <!-- Demo 1: WASM Showcase -->
+                <a href="demo/" class="demo-card">
+                    <div class="card-preview">
+                        <span class="preview-icon">🦅</span>
+                    </div>
+                    <div class="card-content">
+                        <h3 class="card-title">WASM 核心演示</h3>
+                        <p class="card-desc">完整的 PBR 渲染、动态光照、实时阴影和后处理效果展示。支持触摸交互和性能监控。</p>
+                        <div class="card-tags">
+                            <span class="tag">PBR</span>
+                            <span class="tag">WebGL</span>
+                            <span class="tag">WASM</span>
+                        </div>
+                        <span class="card-link">立即体验 →</span>
+                    </div>
+                </a>
+
+                <!-- Demo 2: Physics -->
+                <div class="demo-card" style="opacity: 0.6;">
+                    <div class="card-preview">
+                        <span class="preview-icon">🎱</span>
+                    </div>
+                    <div class="card-content">
+                        <h3 class="card-title">物理引擎演示</h3>
+                        <p class="card-desc">刚体动力学、碰撞检测、软体物理和布料模拟。</p>
+                        <div class="card-tags">
+                            <span class="tag">Physics</span>
+                            <span class="tag">Bullet</span>
+                            <span class="tag">即将推出</span>
+                        </div>
+                        <span class="card-link" style="cursor: not-allowed;">敬请期待</span>
+                    </div>
+                </div>
+
+                <!-- Demo 3: Particles -->
+                <div class="demo-card" style="opacity: 0.6;">
+                    <div class="card-preview">
+                        <span class="preview-icon">✨</span>
+                    </div>
+                    <div class="card-content">
+                        <h3 class="card-title">粒子系统演示</h3>
+                        <p class="card-desc">GPU 加速粒子、流体模拟、火焰烟雾效果。</p>
+                        <div class="card-tags">
+                            <span class="tag">GPU</span>
+                            <span class="tag">Compute</span>
+                            <span class="tag">即将推出</span>
+                        </div>
+                        <span class="card-link" style="cursor: not-allowed;">敬请期待</span>
+                    </div>
+                </div>
+
+                <!-- Demo 4: Animation -->
+                <div class="demo-card" style="opacity: 0.6;">
+                    <div class="card-preview">
+                        <span class="preview-icon">🎭</span>
+                    </div>
+                    <div class="card-content">
+                        <h3 class="card-title">动画系统演示</h3>
+                        <p class="card-desc">骨骼动画、形变目标、动画状态机和混合树。</p>
+                        <div class="card-tags">
+                            <span class="tag">Animation</span>
+                            <span class="tag">glTF</span>
+                            <span class="tag">即将推出</span>
+                        </div>
+                        <span class="card-link" style="cursor: not-allowed;">敬请期待</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="features-section">
+            <h2 class="section-title">引擎特性</h2>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-icon">🎨</div>
+                    <div class="feature-text">
+                        <h3>PBR 渲染</h3>
+                        <p>基于物理的渲染管线，支持金属度/粗糙度工作流，清漆层和各向异性。</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">💡</div>
+                    <div class="feature-text">
+                        <h3>动态光照</h3>
+                        <p>多种光源类型，实时阴影，CSM 级联阴影映射，光照探针。</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">⚡</div>
+                    <div class="feature-text">
+                        <h3>高性能</h3>
+                        <p>WebAssembly 加速，多线程渲染，GPU 实例化，视锥体剔除。</p>
+                    </div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">📱</div>
+                    <div class="feature-text">
+                        <h3>移动优先</h3>
+                        <p>触摸优化，自适应分辨率，电量感知，低内存模式。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="stats-section">
+            <div class="stat-card">
+                <div class="stat-value">60</div>
+                <div class="stat-label">目标帧率 (FPS)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">&lt;5MB</div>
+                <div class="stat-label">WASM 大小</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">&lt;3s</div>
+                <div class="stat-label">首次加载</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">iOS/Android</div>
+                <div class="stat-label">平台支持</div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p class="footer-text">Phoenix Engine - 为 Web 而生的高性能 3D 引擎</p>
+        <div class="footer-links">
+            <a href="#">文档</a>
+            <a href="#">API</a>
+            <a href="#">GitHub</a>
+            <a href="#">社区</a>
+        </div>
+    </footer>
+
+    <script>
+        // Add click handler for demo cards
+        document.querySelectorAll('.demo-card').forEach(card => {
+            if (!card.style.cursor || card.style.cursor !== 'not-allowed') {
+                card.addEventListener('click', (e) => {
+                    const link = card.getAttribute('href');
+                    if (link) {
+                        window.location.href = link;
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>

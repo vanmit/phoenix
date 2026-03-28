@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">
+  <defs>
+    <linearGradient id="animGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#66aaff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3366cc;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect fill="url(#animGrad)" width="400" height="200"/>
+  <circle cx="200" cy="80" r="25" fill="#aaccff"/>
+  <rect x="185" y="105" width="30" height="50" fill="#aaccff"/>
+  <line x1="200" y1="110" x2="170" y2="140" stroke="#aaccff" stroke-width="8" stroke-linecap="round"/>
+  <line x1="200" y1="110" x2="230" y2="140" stroke="#aaccff" stroke-width="8" stroke-linecap="round"/>
+  <line x1="200" y1="155" x2="180" y2="190" stroke="#aaccff" stroke-width="8" stroke-linecap="round"/>
+  <line x1="200" y1="155" x2="220" y2="190" stroke="#aaccff" stroke-width="8" stroke-linecap="round"/>
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="20" fill="white" font-weight="bold">🎭 动画角色</text>
+</svg>

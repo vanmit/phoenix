@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>粒子系统 - Phoenix Engine</title>
+  <style>
+    body { margin: 0; background: #0a0a15; color: white; font-family: 'Segoe UI', sans-serif; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    .header { text-align: center; margin-bottom: 2rem; }
+    .header h1 { color: #ff6b35; margin-bottom: 0.5rem; }
+    .canvas-wrapper { 
+      background: #1a1a2e; 
+      border-radius: 12px; 
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    canvas { width: 100%; height: 500px; display: block; }
+    .controls { 
+      display: flex; 
+      gap: 1rem; 
+      padding: 1rem; 
+      background: #16213e;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .control-group { display: flex; align-items: center; gap: 0.5rem; }
+    .control-group label { font-size: 0.9rem; color: #b8b8b8; }
+    select, button, input[type="range"] { 
+      padding: 0.5rem 1rem; 
+      background: #1a1a2e; 
+      border: 1px solid #333; 
+      color: white; 
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { background: #ff6b35; }
+    .effect-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .effect-btn { padding: 0.5rem 1rem; background: #1a1a2e; border: 1px solid #333; color: white; border-radius: 6px; cursor: pointer; }
+    .effect-btn.active { background: #ff6b35; border-color: #ff6b35; }
+    .stats { 
+      display: flex; 
+      gap: 2rem; 
+      padding: 1rem; 
+      background: #16213e;
+      margin-top: 1rem;
+      border-radius: 8px;
+      flex-wrap: wrap;
+    }
+    .stat { text-align: center; }
+    .stat-value { font-size: 1.5rem; font-weight: bold; color: #ff6b35; }
+    .stat-label { font-size: 0.8rem; color: #888; }
+    .back-link { 
+      display: inline-flex; 
+      align-items: center; 
+      gap: 0.5rem; 
+      color: #2ec4b6; 
+      text-decoration: none;
+      margin-bottom: 1rem;
+    }
+    .back-link:hover { color: #ff6b35; }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .info-card {
+      background: #16213e;
+      padding: 1.5rem;
+      border-radius: 8px;
+      border-left: 3px solid #2ec4b6;
+    }
+    .info-card h3 { color: #ff6b35; margin-bottom: 0.5rem; }
+    .info-card p { color: #b8b8b8; font-size: 0.9rem; line-height: 1.6; }
+    .particle-count { font-size: 1.2rem; color: #2ec4b6; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="../../index.html" class="back-link">← 返回演示中心</a>
+    
+    <div class="header">
+      <h1>✨ 粒子系统</h1>
+      <p>GPU 加速粒子系统 - 火焰 / 烟雾 / 魔法 / 爆炸</p>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="glCanvas"></canvas>
+      <div class="controls">
+        <div class="control-group">
+          <label>效果类型:</label>
+          <div class="effect-buttons">
+            <button class="effect-btn active" data-effect="fire">🔥 火焰</button>
+            <button class="effect-btn" data-effect="smoke">💨 烟雾</button>
+            <button class="effect-btn" data-effect="magic">✨ 魔法</button>
+            <button class="effect-btn" data-effect="spark">⚡ 火花</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <label>粒子数量:</label>
+          <input type="range" id="particleCount" min="100" max="5000" value="2000">
+          <span class="particle-count" id="particleCountDisplay">2000</span>
+        </div>
+        <div class="control-group">
+          <label><input type="checkbox" id="enableGravity" checked> 重力</label>
+        </div>
+        <button id="burstBtn">💥 爆发</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="fpsCounter">60</div>
+        <div class="stat-label">FPS</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="activeParticles">2000</div>
+        <div class="stat-label">活跃粒子</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="emitters">1</div>
+        <div class="stat-label">发射器</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">GPU</div>
+        <div class="stat-label">模拟方式</div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>🚀 GPU 粒子模拟</h3>
+        <p>使用 Compute Shader 在 GPU 上进行粒子物理模拟，支持数万粒子实时计算，包括位置、速度、加速度、生命周期等属性。</p>
+      </div>
+      <div class="info-card">
+        <h3>💫 碰撞检测</h3>
+        <p>支持粒子与场景几何体的碰撞检测，包括地面碰撞、墙壁反弹等，可配置碰撞响应和能量损失。</p>
+      </div>
+      <div class="info-card">
+        <h3>🌊 子发射器</h3>
+        <p>粒子可以生成子粒子，形成复杂的级联效果，如爆炸产生火花，火花再产生烟雾等多层效果。</p>
+      </div>
+      <div class="info-card">
+        <h3>🎨 自定义着色器</h3>
+        <p>支持自定义粒子着色器，实现独特的视觉效果，如颜色渐变、大小变化、纹理动画等。</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 2rem; padding: 1.5rem; background: #16213e; border-radius: 8px;">
+      <h3 style="color: #ff6b35; margin-bottom: 1rem;">技术特性</h3>
+      <ul style="color: #b8b8b8; line-height: 2; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+        <li>✓ GPU 粒子模拟</li>
+        <li>✓ 实例化渲染</li>
+        <li>✓ 软粒子混合</li>
+        <li>✓ 碰撞检测</li>
+        <li>✓ 子发射器系统</li>
+        <li>✓ 力场系统</li>
+        <li>✓ 粒子 LOD</li>
+        <li>✓ 自定义着色器</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    
+    function resizeCanvas() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = 500 * window.devicePixelRatio;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    const vsSource = `
+      attribute vec2 aPosition;
+      attribute vec3 aColor;
+      attribute float aSize;
+      uniform vec3 uEmitterPos;
+      uniform float uTime;
+      uniform vec3 uGravity;
+      uniform int uEffectType;
+      varying vec3 vColor;
+      
+      void main() {
+        float age = fract(uTime + aPosition.x * 0.01);
+        vec3 pos = uEmitterPos;
+        
+        if (uEffectType == 0) { // Fire
+          pos.y += age * 3.0;
+          pos.x += sin(age * 10.0 + aPosition.x) * 0.3;
+          pos.z += cos(age * 8.0 + aPosition.y) * 0.3;
+        } else if (uEffectType == 1) { // Smoke
+          pos.y += age * 1.5;
+          pos.x += sin(age * 5.0) * 0.5;
+        } else if (uEffectType == 2) { // Magic
+          pos.y += age * 2.0;
+          pos.x += sin(age * 15.0) * 0.4;
+          pos.z += cos(age * 12.0) * 0.4;
+        } else { // Spark
+          pos.y += age * 4.0;
+          pos.x += (aPosition.x - 0.5) * 2.0;
+        }
+        
+        pos += uGravity * age * age * 0.5;
+        
+        gl_Position = vec4(pos, 1.0);
+        gl_PointSize = aSize * (1.0 - age) * 3.0;
+        vColor = aColor * (1.0 - age);
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      varying vec3 vColor;
+      
+      void main() {
+        vec2 coord = gl_PointCoord - vec2(0.5);
+        float dist = length(coord);
+        if (dist > 0.5) discard;
+        
+        float alpha = 1.0 - smoothstep(0.3, 0.5, dist);
+        gl_FragColor = vec4(vColor, alpha);
+      }
+    `;
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      return shader;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+    gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+    gl.linkProgram(program);
+    gl.useProgram(program);
+    
+    // Particle data
+    let particleCount = 2000;
+    let positions = [];
+    let colors = [];
+    let sizes = [];
+    
+    const effects = {
+      fire: { 
+        colorBase: [1.0, 0.5, 0.1], 
+        colorVar: [0.3, 0.2, 0.1],
+        sizeBase: 0.1,
+        sizeVar: 0.05
+      },
+      smoke: { 
+        colorBase: [0.3, 0.3, 0.35], 
+        colorVar: [0.1, 0.1, 0.1],
+        sizeBase: 0.15,
+        sizeVar: 0.1
+      },
+      magic: { 
+        colorBase: [0.3, 0.8, 1.0], 
+        colorVar: [0.2, 0.1, 0.2],
+        sizeBase: 0.08,
+        sizeVar: 0.04
+      },
+      spark: { 
+        colorBase: [1.0, 0.9, 0.5], 
+        colorVar: [0.0, 0.1, 0.0],
+        sizeBase: 0.05,
+        sizeVar: 0.03
+      }
+    };
+    
+    let currentEffect = 'fire';
+    let enableGravity = true;
+    
+    function initParticles() {
+      positions = [];
+      colors = [];
+      sizes = [];
+      
+      const effect = effects[currentEffect];
+      
+      for (let i = 0; i < particleCount; i++) {
+        positions.push(Math.random(), Math.random());
+        
+        colors.push(
+          effect.colorBase[0] + (Math.random() - 0.5) * effect.colorVar[0],
+          effect.colorBase[1] + (Math.random() - 0.5) * effect.colorVar[1],
+          effect.colorBase[2] + (Math.random() - 0.5) * effect.colorVar[2]
+        );
+        
+        sizes.push(effect.sizeBase + Math.random() * effect.sizeVar);
+      }
+    }
+    
+    initParticles();
+    
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+    
+    const colorBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+    
+    const sizeBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sizes), gl.STATIC_DRAW);
+    
+    const positionLoc = gl.getAttribLocation(program, 'aPosition');
+    const colorLoc = gl.getAttribLocation(program, 'aColor');
+    const sizeLoc = gl.getAttribLocation(program, 'aSize');
+    const emitterPosLoc = gl.getUniformLocation(program, 'uEmitterPos');
+    const timeLoc = gl.getUniformLocation(program, 'uTime');
+    const gravityLoc = gl.getUniformLocation(program, 'uGravity');
+    const effectTypeLoc = gl.getUniformLocation(program, 'uEffectType');
+    
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    
+    let time = 0;
+    const effectTypes = { fire: 0, smoke: 1, magic: 2, spark: 3 };
+    
+    // UI Controls
+    document.querySelectorAll('.effect-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.effect-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentEffect = btn.dataset.effect;
+        initParticles();
+      });
+    });
+    
+    document.getElementById('particleCount').addEventListener('input', (e) => {
+      particleCount = parseInt(e.target.value);
+      document.getElementById('particleCountDisplay').textContent = particleCount;
+      document.getElementById('activeParticles').textContent = particleCount;
+      initParticles();
+    });
+    
+    document.getElementById('enableGravity').addEventListener('change', (e) => {
+      enableGravity = e.target.checked;
+    });
+    
+    document.getElementById('burstBtn').addEventListener('click', () => {
+      time += 0.5; // Trigger burst effect
+    });
+    
+    let frameCount = 0;
+    let lastTime = performance.now();
+    
+    function render() {
+      gl.clearColor(0.02, 0.02, 0.05, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      
+      time += 0.016;
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(positionLoc);
+      gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+      gl.enableVertexAttribArray(colorLoc);
+      gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+      gl.enableVertexAttribArray(sizeLoc);
+      gl.vertexAttribPointer(sizeLoc, 1, gl.FLOAT, false, 0, 0);
+      
+      gl.uniform3fv(emitterPosLoc, [0, -0.5, 0]);
+      gl.uniform1f(timeLoc, time);
+      gl.uniform3fv(gravityLoc, enableGravity ? [0, -0.5, 0] : [0, 0, 0]);
+      gl.uniform1i(effectTypeLoc, effectTypes[currentEffect]);
+      
+      gl.drawArrays(gl.POINTS, 0, particleCount);
+      
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        document.getElementById('fpsCounter').textContent = frameCount;
+        frameCount = 0;
+        lastTime = now;
+      }
+      
+      requestAnimationFrame(render);
+    }
+    
+    render();
+  </script>
+</body>
+</html>

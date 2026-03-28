@@ -1,0 +1,17 @@
+# Environment Maps Directory
+
+Place HDRI environment maps here:
+- skybox.hdr
+- studio.hdr
+- outdoor.hdr
+- indoor.hdr
+
+Recommended:
+- 2K resolution for mobile
+- 4K for desktop
+- Pre-filtered for IBL (Image Based Lighting)
+
+Tools:
+- Poly Haven: https://polyhaven.com/hdris
+- HDRI Haven (archived)
+- Generate with Blender

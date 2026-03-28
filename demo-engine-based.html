@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phoenix Engine Demo - 基于引擎架构</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,sans-serif;background:#0d1117;overflow:hidden}
+#canvas{display:block;width:100vw;height:100vh}
+#loading{position:fixed;inset:0;background:#0d1117;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+#loading h1{color:#58a6ff;margin-bottom:20px}
+#loading p{color:#8b949e;margin-bottom:15px}
+.progress{width:280px;height:3px;background:#21262d;border-radius:2px;overflow:hidden}
+.bar{height:100%;background:linear-gradient(90deg,#58a6ff,#3fb950);width:0;transition:width .3s}
+#ui{position:fixed;top:10px;left:10px;background:rgba(13,17,23,.9);backdrop-filter:blur(10px);padding:15px;border-radius:10px;border:1px solid #30363d;min-width:180px;z-index:100}
+#ui h3{color:#58a6ff;margin-bottom:12px;font-size:13px}
+.stat{display:flex;justify-content:space-between;margin:6px 0;font-size:11px}
+.stat-label{color:#8b949e}
+.stat-value{color:#3fb950;font-weight:700}
+.controls{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:8px;background:rgba(13,17,23,.9);padding:12px;border-radius:10px;border:1px solid #30363d;flex-wrap:wrap;justify-content:center;z-index:100}
+.btn{background:linear-gradient(135deg,#238636,#2ea043);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:500;transition:all .2s}
+.btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(46,160,67,.3)}
+.panel{position:fixed;top:10px;right:10px;background:rgba(13,17,23,.9);padding:15px;border-radius:10px;border:1px solid #30363d;min-width:150px;z-index:100}
+.panel h4{color:#d2a8ff;margin-bottom:10px;font-size:12px}
+.switch{display:flex;align-items:center;justify-content:space-between;margin:6px 0;font-size:11px;cursor:pointer}
+.switch input{margin-right:8px}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="loading"><h1>🦄 Phoenix Engine</h1><p>初始化渲染引擎...</p><div class="progress"><div class="bar" id="bar"></div></div></div>
+<div id="ui"><h3>📊 性能监控</h3><div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="fps">--</span></div><div class="stat"><span class="stat-label">帧时间</span><span class="stat-value" id="frameTime">-- ms</span></div><div class="stat"><span class="stat-label">粒子</span><span class="stat-value" id="particles">--</span></div><div class="stat"><span class="stat-label">三角形</span><span class="stat-value" id="tris">--</span></div><div class="stat"><span class="stat-label">Draw Calls</span><span class="stat-value" id="draws">--</span></div></div>
+<div class="panel"><h4>⚙️ 效果</h4><label class="switch"><input type="checkbox" id="chkPBR" checked><span>PBR 材质</span></label><label class="switch"><input type="checkbox" id="chkBloom" checked><span>Bloom</span></label><label class="switch"><input type="checkbox" id="chkAnim" checked><span>动画</span></label><label class="switch"><input type="checkbox" id="chkParticles" checked><span>粒子</span></label></div>
+<div class="controls"><button class="btn" onclick="changeMat()">🎨 材质</button><button class="btn" onclick="toggleAnim()">⏯️ 动画</button><button class="btn" onclick="toggleParticles()">✨ 粒子</button><button class="btn" onclick="resetCam()">📷 重置</button></div>
+<script>
+/**
+ * Phoenix Engine Demo
+ * 基于 Phoenix Engine 渲染架构的 WebGL 实现
+ * 遵循引擎的设计模式：RenderDevice -> Pipeline -> Resources
+ */
+(function(){
+'use strict';
+const canvas=document.getElementById('canvas'),gl=canvas.getContext('webgl',{alpha:false,antialias:true,preserveDrawingBuffer:false});
+const bar=document.getElementById('bar'),loading=document.getElementById('loading');
+let progress=0;
+function setProgress(p){progress=p;bar.style.width=p+'%';if(p>=100)setTimeout(()=>loading.style.display='none',300);}
+if(!gl){loading.innerHTML='<h1 class="error">❌ WebGL 不支持</h1><p>请使用 Chrome/Firefox/Edge/Safari</p>';return;}
+setProgress(20);
+
+// ============================================================================
+// Phoenix Engine 渲染架构模拟
+// 遵循引擎的核心设计模式
+// ============================================================================
+
+/**
+ * RenderDevice - 渲染设备抽象
+ * 对应引擎的 RenderDevice 类
+ */
+const RenderDevice={
+    gl:gl,
+    width:0,height:0,
+    programs:{},
+    buffers:{},
+    state:{},
+    
+    // 初始化设备
+    init:function(){
+        this.gl.clearColor(0.05,0.05,0.1,1);
+        this.gl.enable(this.gl.DEPTH_TEST);
+        this.gl.enable(this.gl.CULL_FACE);
+        this.gl.cullFace(this.gl.BACK);
+    },
+    
+    // 调整尺寸
+    resize:function(w,h){
+        this.width=w;this.height=h;
+        canvas.width=w*devicePixelRatio;canvas.height=h*devicePixelRatio;
+        canvas.style.width=w+'px';canvas.style.height=h+'px';
+        this.gl.viewport(0,0,canvas.width,canvas.height);
+    },
+    
+    // 清除
+    clear:function(){
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT|this.gl.DEPTH_BUFFER_BIT);
+    },
+    
+    // 创建着色器程序
+    createProgram:function(vsSrc,fsSrc){
+        const compile=(src,type)=>{
+            const s=this.gl.createShader(type);
+            this.gl.shaderSource(s,src);this.gl.compileShader(s);
+            if(!this.gl.getShaderParameter(s,this.gl.COMPILE_STATUS)){
+                console.error('Shader error:',this.gl.getShaderInfoLog(s));return null;
+            }return s;
+        };
+        const vs=compile(vsSrc,this.gl.VERTEX_SHADER),fs=compile(fsSrc,this.gl.FRAGMENT_SHADER);
+        const p=this.gl.createProgram();
+        this.gl.attachShader(p,vs);this.gl.attachShader(p,fs);this.gl.linkProgram(p);
+        if(!this.gl.getProgramParameter(p,this.gl.LINK_STATUS)){
+            console.error('Program error:',this.gl.getProgramInfoLog(p));return null;
+        }
+        return p;
+    }
+};
+
+/**
+ * 渲染管线 - 对应引擎的 Pipeline 类
+ */
+const RenderPipeline={
+    device:RenderDevice,
+    programs:{main:null,particle:null},
+    locations:{},
+    
+    // 初始化管线
+    init:function(){
+        const vs=`attribute vec3 aPos;attribute vec3 aCol;varying vec3 vCol;uniform mat4 uMVP;uniform float uTime;uniform int uAnim;
+void main(){vCol=aCol;vec3 p=aPos;if(uAnim==1){float a=sin(uTime*2.)*0.3;float c=cos(a),s=sin(a);p.xz=mat2(c,-s,s,c)*p.xz;}gl_Position=uMVP*vec4(p,1.);}`;
+        const fs=`precision mediump float;varying vec3 vCol;uniform int uPBR;uniform int uBloom;uniform vec3 uLight;uniform vec3 uView;
+void main(){vec3 n=normalize(vec3(0.,1.,0.));vec3 v=normalize(uView);vec3 l=normalize(uLight);vec3 h=normalize(l+v);
+float d=max(dot(n,l),0.3);float s=pow(max(dot(n,h),0.),32.);vec3 col=vCol*d+(uPBR==1?vec3(s):vec3(0.));
+if(uBloom==1){float b=dot(col,vec3(.299,.587,.114));if(b>.7)col+=vec3(.15)*(b-.7);}gl_FragColor=vec4(col,1.);}`;
+        const pvs=`attribute vec2 aPos;attribute vec3 aCol;attribute float aSize;varying vec3 vCol;void main(){vCol=aCol;gl_Position=vec4(aPos,0.,1.);gl_PointSize=aSize;}`;
+        const pfs=`precision mediump float;varying vec3 vCol;void main(){float d=length(gl_PointCoord-vec2(.5));if(d>.5)discard;gl_FragColor=vec4(vCol,.8*(1.-d*2.));}`;
+        this.programs.main=this.device.createProgram(vs,fs);
+        this.programs.particle=this.device.createProgram(pvs,pfs);
+        this.locations.main={
+            aPos:this.gl.getAttribLocation(this.programs.main,'aPos'),
+            aCol:this.gl.getAttribLocation(this.programs.main,'aCol'),
+            uMVP:this.gl.getUniformLocation(this.programs.main,'uMVP'),
+            uTime:this.gl.getUniformLocation(this.programs.main,'uTime'),
+            uAnim:this.gl.getUniformLocation(this.programs.main,'uAnim'),
+            uPBR:this.gl.getUniformLocation(this.programs.main,'uPBR'),
+            uBloom:this.gl.getUniformLocation(this.programs.main,'uBloom'),
+            uLight:this.gl.getUniformLocation(this.programs.main,'uLight'),
+            uView:this.gl.getUniformLocation(this.programs.main,'uView')
+        };
+        this.locations.particle={
+            aPos:this.gl.getAttribLocation(this.programs.particle,'aPos'),
+            aCol:this.gl.getAttribLocation(this.programs.particle,'aCol'),
+            aSize:this.gl.getAttribLocation(this.programs.particle,'aSize')
+        };
+    },
+    
+    gl:function(){return this.device.gl;}
+};
+
+/**
+ * 资源管理 - 对应引擎的 ResourceManager 类
+ */
+const ResourceManager={
+    device:RenderDevice,
+    meshes:{},
+    particles:null,
+    
+    // 创建立方体网格
+    createCube:function(){
+        const verts=new Float32Array([
+            -0.5,-0.5,0.5,1,0,0, 0.5,-0.5,0.5,1,0,0, 0.5,0.5,0.5,1,0,0, -0.5,0.5,0.5,1,0,0,
+            -0.5,-0.5,-0.5,0,1,0, 0.5,-0.5,-0.5,0,1,0, 0.5,0.5,-0.5,0,1,0, -0.5,0.5,-0.5,0,1,0,
+            -0.5,0.5,-0.5,0,0,1, 0.5,0.5,-0.5,0,0,1, 0.5,0.5,0.5,0,0,1, -0.5,0.5,0.5,0,0,1,
+            -0.5,-0.5,-0.5,1,1,0, 0.5,-0.5,-0.5,1,1,0, 0.5,-0.5,0.5,1,1,0, -0.5,-0.5,0.5,1,1,0,
+            0.5,-0.5,-0.5,0,1,1, 0.5,0.5,-0.5,0,1,1, 0.5,0.5,0.5,0,1,1, 0.5,-0.5,0.5,0,1,1,
+            -0.5,-0.5,-0.5,1,0,1, -0.5,0.5,-0.5,1,0,1, -0.5,0.5,0.5,1,0,1, -0.5,-0.5,0.5,1,0,1
+        ]);
+        const idx=new Uint16Array([0,1,2,0,2,3,4,6,5,4,7,6,8,9,10,8,10,11,12,14,13,12,15,14,16,17,18,16,18,19,20,22,21,20,23,22]);
+        const vao=this.gl.createVertexArray();this.gl.bindVertexArray(vao);
+        const vbo=this.gl.createBuffer();this.gl.bindBuffer(this.gl.ARRAY_BUFFER,vbo);this.gl.bufferData(this.gl.ARRAY_BUFFER,verts,this.gl.STATIC_DRAW);
+        const ibo=this.gl.createBuffer();this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER,ibo);this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER,idx,this.gl.STATIC_DRAW);
+        this.gl.enableVertexAttribArray(0);this.gl.vertexAttribPointer(0,3,this.gl.FLOAT,false,24,0);
+        this.gl.enableVertexAttribArray(1);this.gl.vertexAttribPointer(1,3,this.gl.FLOAT,false,24,12);
+        this.gl.bindVertexArray(null);
+        return {vao:vao,ibo:ibo,count:36};
+    },
+    
+    // 创建粒子系统
+    createParticles:function(count){
+        const data=new Float32Array(count*6);
+        for(let i=0;i<count;i++){data[i*6+0]=(Math.random()-.5)*6;data[i*6+1]=(Math.random()-.5)*6;data[i*6+2]=Math.random();data[i*6+3]=.5+Math.random()*.5;data[i*6+4]=.2+Math.random()*.8;data[i*6+5]=Math.random();}
+        const vao=this.gl.createVertexArray();this.gl.bindVertexArray(vao);
+        const vbo=this.gl.createBuffer();this.gl.bindBuffer(this.gl.ARRAY_BUFFER,vbo);this.gl.bufferData(this.gl.ARRAY_BUFFER,data,this.gl.STATIC_DRAW);
+        this.gl.enableVertexAttribArray(0);this.gl.vertexAttribPointer(0,2,this.gl.FLOAT,false,24,0);
+        this.gl.enableVertexAttribArray(1);this.gl.vertexAttribPointer(1,3,this.gl.FLOAT,false,24,8);
+        this.gl.enableVertexAttribArray(2);this.gl.vertexAttribPointer(2,1,this.gl.FLOAT,false,24,20);
+        this.gl.bindVertexArray(null);
+        return {vao:vao,vbo:vbo,count:data.length/6,data:data};
+    },
+    
+    gl:function(){return this.device.gl;}
+};
+
+// ============================================================================
+// 初始化
+// ============================================================================
+RenderDevice.init();
+setProgress(40);
+RenderPipeline.init();
+setProgress(60);
+const cube=ResourceManager.createCube();
+const particles=ResourceManager.createParticles(200);
+setProgress(80);
+
+// 状态
+const state={time:0,rot:0,camAng:0.3,camDist:4,camH:2,mat:0,fps:0,frameTime:0,lastFps:performance.now(),frameCount:0};
+const config={pbr:true,bloom:true,anim:true,ps:true};
+
+// 尺寸
+function resize(){RenderDevice.resize(innerWidth,innerHeight);}
+resize();addEventListener('resize',resize);
+
+// 矩阵
+function perspective(fov,aspect,n,f){const t=1/Math.tan(fov/2),nf=1/(n-f);return new Float32Array([t/aspect,0,0,0,0,t,0,0,0,0,(f+n)*nf,-1,0,0,2*f*n*nf,0]);}
+function lookAt(ex,ey,ez,cx,cy,cz,ux,uy,uz){const z0=ex-cx,z1=ey-cy,z2=ez-cz,l=1/Math.sqrt(z0*z0+z1*z1+z2*z2),rz0=z0*l,rz1=z1*l,rz2=z2*l;
+const x0=uy*rz2-uz*rz1,x1=uz*rz0-ux*rz2,x2=ux*rz1-uy*rz0,xl=Math.sqrt(x0*x0+x1*x1+x2*x2),sx0=x0/xl,sx1=x1/xl,sx2=x2/xl;
+const y0=rz1*sx2-rz2*sx1,y1=rz2*sx0-rz0*sx2,y2=rz0*sx1-rz1*sx0;
+return new Float32Array([sx0,y0,-rz0,0,sx1,y1,-rz1,0,sx2,y2,-rz2,0,-(sx0*ex+sx1*ey+sx2*ez),-(y0*ex+y1*ey+y2*ey)+(rz0*ex+rz1*ey+rz2*ez),1]);}
+function rotateY(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1]);}
+function multiply(a,b){return new Float32Array([a[0]*b[0]+a[4]*b[1]+a[8]*b[2]+a[12]*b[3],a[1]*b[0]+a[5]*b[1]+a[9]*b[2]+a[13]*b[3],a[2]*b[0]+a[6]*b[1]+a[10]*b[2]+a[14]*b[3],a[3]*b[0]+a[7]*b[1]+a[11]*b[2]+a[15]*b[3],a[0]*b[4]+a[4]*b[5]+a[8]*b[6]+a[12]*b[7],a[1]*b[4]+a[5]*b[5]+a[9]*b[6]+a[13]*b[7],a[2]*b[4]+a[6]*b[5]+a[10]*b[6]+a[14]*b[7],a[3]*b[4]+a[7]*b[5]+a[11]*b[6]+a[15]*b[7],a[0]*b[8]+a[4]*b[9]+a[8]*b[10]+a[12]*b[11],a[1]*b[8]+a[5]*b[9]+a[9]*b[10]+a[13]*b[11],a[2]*b[8]+a[6]*b[9]+a[10]*b[10]+a[14]*b[11],a[3]*b[8]+a[7]*b[9]+a[11]*b[10]+a[15]*b[11],a[0]*b[12]+a[4]*b[13]+a[8]*b[14]+a[12]*b[15],a[1]*b[12]+a[5]*b[13]+a[9]*b[14]+a[13]*b[15],a[2]*b[12]+a[6]*b[13]+a[10]*b[14]+a[14]*b[15],a[3]*b[12]+a[7]*b[13]+a[11]*b[14]+a[15]*b[15]]);}
+
+// 交互
+let dragging=false,lastX=0,lastY=0;
+canvas.addEventListener('mousedown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;});
+canvas.addEventListener('mouseup',()=>dragging=false);
+canvas.addEventListener('mousemove',e=>{if(!dragging)return;state.camAng+=(e.clientX-lastX)*.01;state.camH+=(e.clientY-lastY)*.01;state.camH=Math.max(.5,Math.min(5,state.camH));lastX=e.clientX;lastY=e.clientY;});
+canvas.addEventListener('wheel',e=>{e.preventDefault();state.camDist+=e.deltaY*.005;state.camDist=Math.max(2,Math.min(10,state.camDist));},{passive:false});
+canvas.addEventListener('touchstart',e=>{if(e.touches.length===1){dragging=true;lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;}},{passive:true});
+canvas.addEventListener('touchmove',e=>{if(!dragging||e.touches.length!==1)return;state.camAng+=(e.touches[0].clientX-lastX)*.02;state.camH+=(e.touches[0].clientY-lastY)*.02;lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;},{passive:true});
+canvas.addEventListener('touchend',()=>dragging=false);
+
+// UI
+window.changeMat=()=>state.mat=(state.mat+1)%3;
+window.toggleAnim=()=>{config.anim=!config.anim;document.getElementById('chkAnim').checked=config.anim;};
+window.toggleParticles=()=>{config.ps=!config.ps;document.getElementById('chkParticles').checked=config.ps;};
+window.resetCam=()=>{state.camAng=0.3;state.camDist=4;state.camH=2;};
+document.getElementById('chkPBR').addEventListener('change',e=>config.pbr=e.target.checked);
+document.getElementById('chkBloom').addEventListener('change',e=>config.bloom=e.target.checked);
+document.getElementById('chkAnim').addEventListener('change',e=>config.anim=e.target.checked);
+document.getElementById('chkParticles').addEventListener('change',e=>config.ps=e.target.checked);
+
+// 渲染循环
+function render(t){
+    const dt=(t-state.time)/1000;state.time=t;
+    state.frameCount++;if(t-state.lastFps>=1000){state.fps=Math.round(state.frameCount*1000/(t-state.lastFps));state.frameTime=(1000/state.fps).toFixed(1);state.frameCount=0;state.lastFps=t;
+        document.getElementById('fps').textContent=state.fps;document.getElementById('frameTime').textContent=state.frameTime+' ms';document.getElementById('particles').textContent=config.ps?200:0;document.getElementById('tris').textContent='36';document.getElementById('draws').textContent=config.ps?'2':'1';}
+    state.rot+=dt*.5;
+    RenderDevice.clear();
+    const proj=perspective(Math.PI/4,canvas.width/canvas.height,.1,100);
+    const ex=Math.sin(state.camAng)*state.camDist,ey=state.camH,ez=Math.cos(state.camAng)*state.camDist;
+    const view=lookAt(ex,ey,ez,0,0,0,0,1,0);
+    const model=rotateY(state.rot);
+    const mvp=multiply(proj,multiply(view,model));
+    
+    // 渲染立方体
+    const gl=RenderDevice.gl;gl.useProgram(RenderPipeline.programs.main);gl.bindVertexArray(cube.vao);
+    gl.uniformMatrix4fv(RenderPipeline.locations.main.uMVP,false,mvp);
+    gl.uniform1f(RenderPipeline.locations.main.uTime,state.time/1000);
+    gl.uniform1i(RenderPipeline.locations.main.uAnim,config.anim?1:0);
+    gl.uniform1i(RenderPipeline.locations.main.uPBR,config.pbr?1:0);
+    gl.uniform1i(RenderPipeline.locations.main.uBloom,config.bloom?1:0);
+    gl.uniform3f(RenderPipeline.locations.main.uLight,.5,1,.3);
+    gl.uniform3f(RenderPipeline.locations.main.uView,ex,ey,ez);
+    gl.drawElements(gl.TRIANGLES,36,gl.UNSIGNED_SHORT,0);
+    
+    // 渲染粒子
+    if(config.ps){
+        gl.useProgram(RenderPipeline.programs.particle);gl.bindVertexArray(particles.vao);
+        for(let i=0;i<200;i++){particles.data[i*6+1]+=dt*.3;if(particles.data[i*6+1]>3){particles.data[i*6+0]=(Math.random()-.5)*6;particles.data[i*6+1]=-3;particles.data[i*6+5]=Math.random();}}
+        gl.bufferSubData(gl.ARRAY_BUFFER,0,particles.data);
+        gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+        gl.drawArrays(gl.POINTS,0,200);
+        gl.disable(gl.BLEND);gl.depthMask(true);
+    }
+    requestAnimationFrame(render);
+}
+
+setProgress(100);
+requestAnimationFrame(render);
+console.log('✅ Phoenix Engine Demo 启动成功');
+})();
+</script>
+</body>
+</html>
