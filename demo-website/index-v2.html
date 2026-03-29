@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phoenix Engine - WASM Demo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,sans-serif;background:#0d1117;overflow:hidden}
+#glcanvas{display:block;width:100vw;height:100vh}
+#loading-overlay{position:fixed;inset:0;background:#0d1117;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+#loading-overlay.hidden{display:none !important}
+#loading-overlay h1{color:#58a6ff;margin-bottom:20px}
+#loading-overlay p{color:#8b949e;margin:5px 0}
+.progress{width:300px;height:4px;background:#21262d;border-radius:2px;overflow:hidden;margin-top:15px}
+#loading-progress{height:100%;background:linear-gradient(90deg,#58a6ff,#3fb950);width:0;transition:width .3s}
+#error-overlay{position:fixed;inset:0;background:rgba(13,17,23,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;color:#ff6b6b;text-align:center}
+#error-overlay.hidden{display:none !important}
+#error-overlay h1{font-size:24px;margin-bottom:10px}
+#error-overlay button{margin-top:15px}
+#ui{position:fixed;top:10px;left:10px;background:rgba(13,17,23,.9);backdrop-filter:blur(10px);padding:15px;border-radius:10px;border:1px solid #30363d;min-width:180px;z-index:100}
+#ui h3{color:#58a6ff;margin-bottom:12px;font-size:13px}
+.stat{display:flex;justify-content:space-between;margin:6px 0;font-size:11px}
+.stat-label{color:#8b949e}
+.stat-value{color:#3fb950;font-weight:700}
+#hud-toggle{position:absolute;top:5px;right:10px;cursor:pointer;font-size:10px;color:#8b949e}
+#hud-toggle:hover{color:#58a6ff}
+#hud-content.collapsed,#control-content.collapsed{display:none}
+#controls-panel{position:fixed;top:10px;right:10px;background:rgba(13,17,23,.9);padding:15px;border-radius:10px;border:1px solid #30363d;min-width:150px;z-index:100}
+#controls-panel h4{color:#d2a8ff;margin-bottom:10px;font-size:12px}
+#control-toggle{position:absolute;top:5px;right:10px;cursor:pointer;font-size:10px;color:#8b949e}
+#control-toggle:hover{color:#d2a8ff}
+.switch{display:flex;align-items:center;justify-content:space-between;margin:6px 0;font-size:11px;cursor:pointer}
+.switch input{margin-right:8px}
+#controls-bar{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:8px;background:rgba(13,17,23,.9);padding:12px;border-radius:10px;border:1px solid #30363d;flex-wrap:wrap;justify-content:center;z-index:100}
+.btn{background:linear-gradient(135deg,#238636,#2ea043);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:500;transition:all .2s}
+.btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(46,160,67,.3)}
+#frame-time-graph{position:fixed;bottom:80px;left:10px;width:200px;height:60px;background:rgba(13,17,23,.8);border:1px solid #30363d;border-radius:4px;padding:5px}
+</style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+    <h1>🦅 Phoenix Engine</h1>
+    <p>加载 WASM 模块...</p>
+    <div class="progress"><div id="loading-progress"></div></div>
+    <p id="loading-status">正在初始化...</p>
+</div>
+
+<!-- Error Overlay -->
+<div id="error-overlay" class="hidden">
+    <h1 id="error-message">错误</h1>
+    <p id="error-details" style="color:#8b949e;margin:10px 0;font-size:12px"></p>
+    <button class="btn" onclick="location.reload()">重试</button>
+</div>
+
+<!-- Performance HUD -->
+<div id="ui">
+    <h3>📊 性能监控</h3>
+    <span id="hud-toggle">▼</span>
+    <div id="hud-content">
+        <div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="fps-value">--</span></div>
+        <div class="stat"><span class="stat-label">帧时间</span><span class="stat-value" id="frame-time-value">-- ms</span></div>
+        <div class="stat"><span class="stat-label">三角形</span><span class="stat-value" id="triangles-value">--</span></div>
+        <div class="stat"><span class="stat-label">Draw Calls</span><span class="stat-value" id="draw-calls-value">--</span></div>
+        <div class="stat"><span class="stat-label">内存</span><span class="stat-value" id="memory-value">-- MB</span></div>
+        <div id="frame-time-graph"></div>
+    </div>
+</div>
+
+<!-- Controls Panel -->
+<div id="controls-panel">
+    <h4>⚙️ 效果</h4>
+    <span id="control-toggle">▼</span>
+    <div id="control-content">
+        <label class="switch"><input type="checkbox" id="chkPBR" checked><span>PBR 材质</span></label>
+        <label class="switch"><input type="checkbox" id="chkBloom" checked><span>Bloom</span></label>
+        <label class="switch"><input type="checkbox" id="chkAnim" checked><span>动画</span></label>
+    </div>
+</div>
+
+<!-- Control Buttons -->
+<div id="controls-bar">
+    <button class="btn" onclick="changeMat()">🎨 材质</button>
+    <button class="btn" onclick="toggleAnim()">⏯️ 动画</button>
+    <button class="btn" onclick="resetCam()">📷 重置</button>
+</div>
+
+<!-- Module 配置 (让 phoenix-engine.js 自己管理内存) -->
+<script>
+var Module = {
+    // 不指定 INITIAL_MEMORY 和 wasmMemory，让 Emscripten 自动管理
+    
+    monitorRunDependencies: function(count) {
+        console.log('Dependencies:', count);
+    },
+    
+    onRuntimeInitialized: function() {
+        console.log("✅ Phoenix Engine WASM initialized");
+        
+        if (typeof Module["_init_gl"] !== "function") {
+            console.error("❌ _init_gl not found");
+            showError("_init_gl function not found");
+            return;
+        }
+        
+        try {
+            Module["_init_gl"]();
+            console.log("✅ WebGL initialized");
+        } catch (e) {
+            console.error("❌ WebGL init failed:", e);
+            showError("WebGL init failed: " + e.message);
+            return;
+        }
+        
+        document.getElementById("loading-progress").style.width = "100%";
+        document.getElementById("loading-status").textContent = "Engine Ready!";
+        setTimeout(() => {
+            document.getElementById("loading-overlay").classList.add("hidden");
+        }, 500);
+        
+        function renderLoop() {
+            if (typeof Module["_render"] === "function") Module["_render"]();
+            if (typeof Module["_update"] === "function") Module["_update"]();
+            requestAnimationFrame(renderLoop);
+        }
+        renderLoop();
+        console.log("✅ Render loop started");
+    },
+    
+    onAbort: function(what) {
+        console.error("❌ WASM abort:", what);
+        showError("Engine load failed: " + what);
+    }
+};
+
+function showError(msg) {
+    document.getElementById("error-message").textContent = "Error";
+    document.getElementById("error-details").textContent = msg;
+    document.getElementById("error-overlay").classList.remove("hidden");
+}
+
+window.changeMat = function() {
+    console.log("🎨 Material");
+    if (typeof Module["_set_material_param"] === "function") {
+        window._matIdx = (window._matIdx || 0) + 1;
+        Module["_set_material_param"](0, window._matIdx % 4);
+    }
+};
+
+window.toggleAnim = function() {
+    console.log("⏯️ Animation");
+    if (typeof Module["_set_animation"] === "function") {
+        window._animOn = !window._animOn;
+        Module["_set_animation"](window._animOn ? 1 : 0);
+    }
+};
+
+window.resetCam = function() {
+    console.log("📷 Reset Camera");
+    if (typeof Module["_set_camera_mode"] === "function") {
+        Module["_set_camera_mode"](0);
+    }
+};
+</script>
+
+<script type="text/javascript" src="phoenix-engine.js"></script>
+</body>
+</html>
