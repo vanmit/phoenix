@@ -6,10 +6,68 @@ project(PhoenixEngine
     LANGUAGES CXX C
 )
 
-# C++17 标准
-set(CMAKE_CXX_STANDARD 17)
+# C++20 standard (required by bgfx)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# ============================================================================
+# Sanitizer Support (AddressSanitizer + UndefinedBehaviorSanitizer)
+# ============================================================================
+option(ENABLE_SANITIZERS "Enable ASAN and UBSAN for debugging" OFF)
+option(SANITIZE_THREAD "Use ThreadSanitizer instead of ASAN" OFF)
+
+if(ENABLE_SANITIZERS)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(STATUS "🔍 Enabling sanitizers...")
+        
+        # Base sanitizer flags
+        set(SANITIZER_FLAGS "-fsanitize=address,undefined")
+        set(SANITIZER_LINK_FLAGS "-fsanitize=address,undefined")
+        
+        # ThreadSanitizer (alternative to ASAN)
+        if(SANITIZE_THREAD)
+            set(SANITIZER_FLAGS "-fsanitize=thread,undefined")
+            set(SANITIZER_LINK_FLAGS "-fsanitize=thread,undefined")
+            message(STATUS "  Using ThreadSanitizer")
+        else()
+            message(STATUS "  Using AddressSanitizer + UBSAN")
+        endif()
+        
+        # Add to compiler flags
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${SANITIZER_FLAGS}")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SANITIZER_FLAGS}")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${SANITIZER_LINK_FLAGS}")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${SANITIZER_LINK_FLAGS}")
+        
+        # ASAN specific options
+        if(NOT SANITIZE_THREAD)
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-address-use-after-scope")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize-address-use-after-scope")
+        endif()
+        
+        # Disable for Release builds
+        if(CMAKE_BUILD_TYPE STREQUAL "Release")
+            message(WARNING "⚠️ Sanitizers are disabled in Release builds")
+        endif()
+        
+    elseif(MSVC)
+        # MSVC uses different sanitizer options
+        message(STATUS "🔍 MSVC: Using /fsanitize=address")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /fsanitize=address")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fsanitize=address")
+    else()
+        message(WARNING "⚠️ Sanitizers not supported for this compiler")
+    endif()
+endif()
+
+# Print sanitizer status
+if(ENABLE_SANITIZERS)
+    message(STATUS "  Sanitizer flags: ${SANITIZER_FLAGS}")
+else()
+    message(STATUS "🔍 Sanitizers disabled (use -DENABLE_SANITIZERS=ON to enable)")
+endif()
+# ============================================================================
 
 # 编译选项
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -35,7 +93,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# 查找或获取 bgfx
+# 查找或获取 bgfx (bgfx.cmake includes SPIRV-Headers, SPIRV-Tools, glslang)
 find_package(bgfx CONFIG QUIET)
 if(NOT bgfx_FOUND)
     message(STATUS "Fetching bgfx from GitHub...")
@@ -46,6 +104,45 @@ if(NOT bgfx_FOUND)
         GIT_TAG master
     )
     FetchContent_MakeAvailable(bgfx)
+endif()
+
+# 获取 shaderc (C++ library for GLSL to SPIR-V compilation)
+# Note: shaderc requires SPIRV-Tools which is included with bgfx
+# 在 FetchContent 之前设置选项以避免与 bgfx 的 shaderc 目标冲突
+set(SHADERC_SKIP_TESTS ON CACHE BOOL "Skip shaderc tests" FORCE)
+set(SHADERC_SKIP_EXAMPLES ON CACHE BOOL "Skip shaderc examples" FORCE)
+set(SHADERC_SKIP_COPYRIGHT_CHECK ON CACHE BOOL "Skip copyright check" FORCE)
+set(SHADERC_SKIP_GLSLC ON CACHE BOOL "Skip glslc tool" FORCE)
+set(SHADERC_SKIP_INSTALL ON CACHE BOOL "Skip installation" FORCE)
+
+include(FetchContent)
+FetchContent_Declare(
+    shaderc
+    GIT_REPOSITORY https://github.com/google/shaderc.git
+    GIT_TAG v2023.6
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(shaderc)
+if(NOT shaderc_POPULATED)
+    FetchContent_Populate(shaderc)
+    # 构建 libshaderc 静态库，重命名避免与 bgfx 冲突
+    add_library(shaderc_static STATIC
+        ${shaderc_SOURCE_DIR}/libshaderc/src/shaderc.cc
+    )
+    target_include_directories(shaderc_static PUBLIC
+        ${shaderc_SOURCE_DIR}/libshaderc/include
+        ${SPIRV-Headers_SOURCE_DIR}/include
+        ${SPIRV-Tools_SOURCE_DIR}/include
+    )
+    target_link_libraries(shaderc_static PRIVATE
+        SPIRV-Tools-static
+        SPIRV-Tools-opt
+        glslang
+    )
+    set_target_properties(shaderc_static PROPERTIES 
+        OUTPUT_NAME "shaderc_lib"
+        POSITION_INDEPENDENT_CODE ON
+    )
 endif()
 
 # 查找 OpenGL
@@ -114,6 +211,7 @@ add_library(phoenix_engine STATIC
     
     # Shader System
     src/render/Shader.cpp
+    src/render/BuiltinShaders.cpp
     
     # Render Pipeline
     src/render/Pipeline.cpp
@@ -148,10 +246,15 @@ target_include_directories(phoenix_engine PUBLIC
 )
 
 target_link_libraries(phoenix_engine PUBLIC
-    bgfx::bgfx
+    bgfx
+    bx
+    bimg
+    shaderc_static
 )
 
 # Third-party libraries
+# shaderc is always used now
+target_compile_definitions(phoenix_engine PRIVATE PHOENIX_USE_SHADERC)
 if(USE_TINYGLTF)
     target_link_libraries(phoenix_engine PRIVATE tinygltf)
     target_compile_definitions(phoenix_engine PRIVATE PHOENIX_USE_TINYGLTF)
@@ -379,6 +482,7 @@ message(STATUS "  Build benchmarks: ${BUILD_BENCHMARKS}")
 message(STATUS "")
 message(STATUS "Third-party Libraries:")
 message(STATUS "  bgfx: ${bgfx_FOUND}")
+message(STATUS "  shaderc: enabled (GLSL to SPIR-V)")
 message(STATUS "  OpenGL: ${OpenGL_FOUND}")
 message(STATUS "  Vulkan: ${Vulkan_FOUND}")
 message(STATUS "  tinygltf: ${USE_TINYGLTF}")
