@@ -228,12 +228,38 @@ extern "C" WASM_EXPORT void phoenix_add_to_scene(
 // Texture Management
 // ============================================================================
 
+// SECURITY FIX: Texture size limits (CWE-119, M-002)
+constexpr uint32_t MAX_TEXTURE_SIZE = 16384;
+constexpr uint32_t MAX_TEXTURE_PIXELS = MAX_TEXTURE_SIZE * MAX_TEXTURE_SIZE;
+
 extern "C" WASM_EXPORT TextureHandle phoenix_create_texture(
     uint32_t width, 
     uint32_t height, 
     const void* data
 ) {
     TextureHandle handle = {0};
+    
+    // SECURITY FIX: Validate texture dimensions
+    if (width > MAX_TEXTURE_SIZE || height > MAX_TEXTURE_SIZE) {
+        fprintf(stderr, "Texture size exceeds maximum (%ux%u > %ux%u)\n", 
+                width, height, MAX_TEXTURE_SIZE, MAX_TEXTURE_SIZE);
+        return handle;
+    }
+    
+    // SECURITY FIX: Check for integer overflow
+    if (width > 0 && height > 0) {
+        if (width > MAX_TEXTURE_PIXELS / height) {
+            fprintf(stderr, "Texture pixel count would overflow\n");
+            return handle;
+        }
+        
+        // Check total data size (RGBA = 4 bytes per pixel)
+        if (data && width * height > MAX_TEXTURE_PIXELS) {
+            fprintf(stderr, "Texture data size exceeds limit\n");
+            return handle;
+        }
+    }
+    
     handle.id = g_state.nextResourceId++;
     handle.width = width;
     handle.height = height;
