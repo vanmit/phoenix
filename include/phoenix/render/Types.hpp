@@ -11,26 +11,59 @@ namespace render {
  * @brief 强类型句柄系统 - 防止悬空引用和类型混淆
  * @tparam T 句柄类型标签
  * @tparam IndexType 底层索引类型
+ * 
+ * 安全特性:
+ * - 16 位索引 + 16 位代数，防止悬空引用
+ * - 编译期类型检查，防止类型混淆
+ * - 无效值检查，防止空句柄使用
  */
 template<typename T, typename IndexType = uint32_t>
 class Handle {
 public:
     using index_type = IndexType;
     static constexpr IndexType INVALID_INDEX = static_cast<IndexType>(-1);
+    static constexpr IndexType INDEX_MASK = static_cast<IndexType>(0xFFFF);
+    static constexpr IndexType GENERATION_MASK = static_cast<IndexType>(0xFFFF0000);
+    static constexpr int INDEX_BITS = 16;
+    static constexpr int GENERATION_BITS = 16;
 
-    Handle() noexcept : index_(INVALID_INDEX) {}
-    explicit Handle(IndexType index) noexcept : index_(index) {}
+    Handle() noexcept : index_(INVALID_INDEX), generation_(0) {}
+    explicit Handle(IndexType index, IndexType generation = 0) noexcept 
+        : index_(index & INDEX_MASK), generation_(generation & 0xFFFF) {}
 
     [[nodiscard]] bool valid() const noexcept { return index_ != INVALID_INDEX; }
     [[nodiscard]] IndexType index() const noexcept { return index_; }
-    [[nodiscard]] bool operator==(const Handle& other) const noexcept { return index_ == other.index_; }
-    [[nodiscard]] bool operator!=(const Handle& other) const noexcept { return index_ != other.index_; }
-    [[nodiscard]] bool operator<(const Handle& other) const noexcept { return index_ < other.index_; }
+    [[nodiscard]] IndexType generation() const noexcept { return generation_; }
+    
+    [[nodiscard]] bool operator==(const Handle& other) const noexcept { 
+        return index_ == other.index_ && generation_ == other.generation_; 
+    }
+    [[nodiscard]] bool operator!=(const Handle& other) const noexcept { 
+        return !(*this == other); 
+    }
+    [[nodiscard]] bool operator<(const Handle& other) const noexcept { 
+        return index_ < other.index_; 
+    }
 
     explicit operator bool() const noexcept { return valid(); }
+    
+    /**
+     * @brief 检查句柄是否与另一个句柄指向同一资源 (忽略代数)
+     */
+    [[nodiscard]] bool sameResource(const Handle& other) const noexcept {
+        return index_ == other.index_;
+    }
+    
+    /**
+     * @brief 检查句柄是否有效且代数匹配
+     */
+    [[nodiscard]] bool isValidAndMatches(const Handle& other) const noexcept {
+        return valid() && *this == other;
+    }
 
 private:
-    IndexType index_;
+    IndexType index_ : 16;       // 16 位资源索引
+    IndexType generation_ : 16;  // 16 位代数，防止悬空引用
 };
 
 // 渲染资源句柄类型
