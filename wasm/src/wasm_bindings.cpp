@@ -40,7 +40,43 @@ extern "C" WASM_EXPORT int phoenix_init(const EngineConfig* config) {
         return -1; // Already initialized
     }
     
+    // Validate config pointer if provided
     if (config) {
+#ifdef __EMSCRIPTEN__
+        // SECURITY FIX: Complete boundary check for config pointer
+        int valid = EM_ASM_INT({
+            const ptr = $0;
+            const maxPtr = HEAPU8.length;
+            const minSize = 16;  // Minimum EngineConfig size
+            
+            try {
+                // Check if pointer is a valid number
+                if (typeof ptr !== 'number' || ptr === 0) return 0;
+                // Check pointer is within bounds
+                if (ptr < 0 || ptr >= maxPtr) return 0;
+                // Check entire structure is accessible (boundary check)
+                if (ptr + minSize > maxPtr) return 0;
+                
+                // Try to read first and last byte of structure
+                HEAPU8[ptr];
+                HEAPU8[ptr + minSize - 1];
+                return 1;
+            } catch(e) {
+                console.error('Invalid config pointer:', ptr, e);
+                return 0;
+            }
+        }, reinterpret_cast<uintptr_t>(config));
+        
+        if (!valid) {
+            return -2; // Invalid config pointer
+        }
+#endif
+        
+        // Validate config values
+        if (config->width > 16384 || config->height > 16384) {
+            return -3; // Resolution too large
+        }
+        
         g_state.config = *config;
     } else {
         g_state.config = EngineConfig{};

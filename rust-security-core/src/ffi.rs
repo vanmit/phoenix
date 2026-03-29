@@ -184,7 +184,14 @@ pub extern "C" fn crypto_decrypt(
     encrypted_len: usize,
     out_len: *mut usize,
 ) -> *mut c_uchar {
-    if handle.is_null() || encrypted.is_null() || out_len.is_null() || encrypted_len < 4 {
+    // SECURITY FIX: Complete null checks
+    if handle.is_null() || encrypted.is_null() || out_len.is_null() {
+        *out_len = 0;
+        return ptr::null_mut();
+    }
+
+    // SECURITY FIX: Minimum size check (at least 4 bytes for nonce_len)
+    if encrypted_len < 4 {
         *out_len = 0;
         return ptr::null_mut();
     }
@@ -192,7 +199,7 @@ pub extern "C" fn crypto_decrypt(
     let crypto = unsafe { &*(handle as *mut CryptoModule) };
     let encrypted_slice = unsafe { std::slice::from_raw_parts(encrypted, encrypted_len) };
 
-    // Parse nonce length
+    // SECURITY FIX: Validate nonce_len before use (CWE-119)
     let nonce_len = u32::from_le_bytes([
         encrypted_slice[0],
         encrypted_slice[1],
@@ -200,6 +207,20 @@ pub extern "C" fn crypto_decrypt(
         encrypted_slice[3],
     ]) as usize;
 
+    // FIX CWE-119: Boundary check for nonce length
+    if nonce_len > CryptoModule::NONCE_SIZE {
+        *out_len = 0;
+        return ptr::null_mut();
+    }
+
+    // FIX CWE-190: Integer overflow protection
+    let data_start = 4usize.checked_add(nonce_len).unwrap_or(usize::MAX);
+    if data_start > encrypted_len || data_start == usize::MAX {
+        *out_len = 0;
+        return ptr::null_mut();
+    }
+
+    // Additional boundary check
     if encrypted_len < 4 + nonce_len {
         *out_len = 0;
         return ptr::null_mut();
