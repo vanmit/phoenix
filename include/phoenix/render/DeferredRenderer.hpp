@@ -5,6 +5,7 @@
 #include "Resources.hpp"
 #include "Shader.hpp"
 #include "PBR.hpp"
+#include "PostProcess.hpp"
 #include <array>
 #include <vector>
 #include <memory>
@@ -307,6 +308,18 @@ public:
     [[nodiscard]] FrameBufferHandle getOutputFrameBuffer() const { return outputFrameBuffer_; }
     
     /**
+     * @brief 获取后处理堆栈
+     */
+    [[nodiscard]] PostProcessStack& getPostProcessStack() { return postProcessStack_; }
+    [[nodiscard]] const PostProcessStack& getPostProcessStack() const { return postProcessStack_; }
+    
+    /**
+     * @brief 应用后处理
+     */
+    void applyPostProcess(RenderDevice& device, TextureHandle input, 
+                          TextureHandle output, uint32_t viewId);
+    
+    /**
      * @brief 获取配置
      */
     [[nodiscard]] const DeferredConfig& getConfig() const { return config_; }
@@ -380,6 +393,9 @@ private:
     // 辅助几何体
     BufferHandle fullscreenQuadVB_;
     BufferHandle fullscreenQuadIB_;
+    
+    // 后处理
+    PostProcessStack postProcessStack_;
     
     void createFullscreenQuad();
     void buildLightData();

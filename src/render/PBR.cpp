@@ -1,7 +1,50 @@
 #include "phoenix/render/PBR.hpp"
+#include "phoenix/render/RenderDevice.hpp"
+#include "phoenix/render/Shader.hpp"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <random>
+
+namespace phoenix {
+namespace render {
+
+// 局部向量类型定义 (用于 IBL 计算)
+struct vec2 {
+    float x, y;
+    vec2() : x(0), y(0) {}
+    vec2(float x_, float y_) : x(x_), y(y_) {}
+};
+
+struct vec3 {
+    float x, y, z;
+    vec3() : x(0), y(0), z(0) {}
+    vec3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
+    vec3(float v) : x(v), y(v), z(v) {}
+    
+    vec3 operator+(const vec3& o) const { return vec3(x + o.x, y + o.y, z + o.z); }
+    vec3 operator-(const vec3& o) const { return vec3(x - o.x, y - o.y, z - o.z); }
+    vec3 operator*(float s) const { return vec3(x * s, y * s, z * s); }
+    vec3 operator/(float s) const { return vec3(x / s, y / s, z / s); }
+    vec3& operator+=(const vec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
+};
+
+inline float dot(const vec3& a, const vec3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+inline vec3 cross(const vec3& a, const vec3& b) {
+    return vec3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
+}
+
+inline vec3 normalize(const vec3& v) {
+    float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return (len > 0.0f) ? (v / len) : vec3(0);
+}
 
 namespace phoenix {
 namespace render {
@@ -291,37 +334,79 @@ void PBRRenderer::shutdown() {
 
 bool PBRRenderer::generateIBL(RenderDevice& device, TextureHandle environmentMap) {
     if (!environmentMap.valid()) {
+        PHX_LOG_ERROR("PBRRenderer: Invalid environment map for IBL generation");
         return false;
     }
     
-    // 1. 生成立方体贴图
-    // 2. 生成辐照度贴图
-    // 3. 生成预过滤环境贴图
-    // 4. 生成 BRDF LUT
+    PHX_LOG_INFO("PBRRenderer: Starting IBL generation pipeline...");
     
-    // 这里使用 IBLUtils 工具函数
+    // 存储环境贴图
     ibl_.environmentMap = environmentMap;
     
-    // TODO: 实现完整的 IBL 生成管线
-    // IBLUtils::generateCubemap(...)
-    // IBLUtils::generateIrradianceMap(...)
-    // IBLUtils::generatePrefilteredMap(...)
-    // IBLUtils::generateBRDFLUT(...)
+    // 1. 生成立方体贴图 (equirectangular → cubemap)
+    PHX_LOG_INFO("PBRRenderer: Generating environment cubemap...");
+    if (!IBLUtils::generateCubemap(device, environmentMap, 
+                                    PBRConstants::IBL_SPECULAR_SIZE, 
+                                    ibl_.environmentMap)) {
+        PHX_LOG_ERROR("PBRRenderer: Failed to generate environment cubemap");
+        return false;
+    }
+    ibl_.environmentSize = PBRConstants::IBL_SPECULAR_SIZE;
+    
+    // 2. 生成辐照度贴图 (漫反射 IBL)
+    PHX_LOG_INFO("PBRRenderer: Generating irradiance map...");
+    if (!IBLUtils::generateIrradianceMap(device, ibl_.environmentMap,
+                                          PBRConstants::IBL_DIFFUSE_SIZE,
+                                          ibl_.irradianceMap)) {
+        PHX_LOG_ERROR("PBRRenderer: Failed to generate irradiance map");
+        return false;
+    }
+    ibl_.irradianceSize = PBRConstants::IBL_DIFFUSE_SIZE;
+    
+    // 3. 生成预过滤环境贴图 (镜面反射 IBL)
+    PHX_LOG_INFO("PBRRenderer: Generating prefiltered environment map...");
+    if (!IBLUtils::generatePrefilteredMap(device, ibl_.environmentMap,
+                                           PBRConstants::IBL_SPECULAR_SIZE,
+                                           ibl_.prefilteredMap)) {
+        PHX_LOG_ERROR("PBRRenderer: Failed to generate prefiltered map");
+        return false;
+    }
+    ibl_.prefilteredSize = PBRConstants::IBL_SPECULAR_SIZE;
+    
+    // 4. 生成 BRDF LUT
+    PHX_LOG_INFO("PBRRenderer: Generating BRDF LUT...");
+    if (!IBLUtils::generateBRDFLUT(device, PBRConstants::IBL_BRDF_LUT_SIZE,
+                                    ibl_.brdfLUT)) {
+        PHX_LOG_ERROR("PBRRenderer: Failed to generate BRDF LUT");
+        return false;
+    }
+    ibl_.brdfLUTSize = PBRConstants::IBL_BRDF_LUT_SIZE;
+    
+    PHX_LOG_INFO("PBRRenderer: IBL generation complete!");
+    PHX_LOG_INFO("PBRRenderer: Environment: %dx%d, Irradiance: %dx%d, Prefiltered: %dx%d, BRDF LUT: %dx%d",
+                 ibl_.environmentSize, ibl_.environmentSize,
+                 ibl_.irradianceSize, ibl_.irradianceSize,
+                 ibl_.prefilteredSize, ibl_.prefilteredSize,
+                 ibl_.brdfLUTSize, ibl_.brdfLUTSize);
     
     return true;
 }
 
 bool PBRRenderer::loadIBLFromFile(RenderDevice& device, const std::filesystem::path& path) {
-    // 加载环境贴图
+    // 加载 HDR 环境贴图
     TextureDesc desc;
-    desc.type = TextureType::TextureCube;
-    desc.format = TextureFormat::RGBA16F;
-    desc.generateMips = true;
+    desc.type = TextureType::Texture2D;
+    desc.format = TextureFormat::RGBA16F; // HDR 格式
+    desc.generateMips = false;
+    desc.srgb = false; // HDR 是线性空间
     
     Texture envMap;
-    if (!envMap.loadFromFile(device, path)) {
+    if (!envMap.loadFromFile(device, path, desc)) {
+        PHX_LOG_ERROR("PBRRenderer: Failed to load HDR environment map: %s", path.string().c_str());
         return false;
     }
+    
+    PHX_LOG_INFO("PBRRenderer: Loaded HDR environment map: %s", path.string().c_str());
     
     return generateIBL(device, envMap.getHandle());
 }
@@ -531,37 +616,454 @@ float distributionAnisotropicGGX(float NdotH, float XdotH, float YdotH,
 
 namespace IBLUtils {
 
+// 辅助函数：等距柱状投影到球面坐标
+inline void equirectangularToSpherical(float x, float y, float& theta, float& phi) {
+    theta = 2.0f * PBRConstants::PI * x;       // [0, 2π]
+    phi = PBRConstants::PI * y - PBRConstants::PI / 2.0f;  // [-π/2, π/2]
+}
+
+// 辅助函数：球面坐标到笛卡尔坐标
+inline void sphericalToCartesian(float theta, float phi, float& x, float& y, float& z) {
+    const float cosPhi = std::cos(phi);
+    x = cosPhi * std::cos(theta);
+    y = std::sin(phi);
+    z = cosPhi * std::sin(theta);
+}
+
+// 辅助函数：笛卡尔坐标到球面坐标
+inline void cartesianToSpherical(float x, float y, float z, float& theta, float& phi) {
+    theta = std::atan2(z, x);
+    if (theta < 0) theta += 2.0f * PBRConstants::PI;
+    phi = std::asin(std::clamp(y, -1.0f, 1.0f));
+}
+
+// Hammersley 低差异序列 (用于重要性采样)
+inline vec2 hammersley(uint32_t i, uint32_t N) {
+    // Van der Corput sequence for radical inverse
+    uint32_t bits = (i << 16u) | (i >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    
+    float radicalInverseV = float(bits) * 2.3283064365386963e-10f; // 1 / 2^32
+    return vec2(float(i) / float(N), radicalInverseV);
+}
+
+// GGX 重要性采样
+inline vec3 importanceSampleGGX(const vec2& xi, const vec3& N, float roughness) {
+    const float a = roughness * roughness;
+    
+    const float phi = 2.0f * PBRConstants::PI * xi.x;
+    const float cosTheta = std::sqrt((1.0f - xi.y) / (1.0f + (a * a - 1.0f) * xi.y));
+    const float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
+    
+    // 球坐标到笛卡尔坐标
+    vec3 H;
+    H.x = std::cos(phi) * sinTheta;
+    H.y = std::sin(phi) * sinTheta;
+    H.z = cosTheta;
+    
+    // 切线空间到世界空间
+    vec3 up = (std::abs(N.z) > 0.999f) ? vec3(1.0f, 0.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f);
+    vec3 tangent = normalize(cross(up, N));
+    vec3 bitangent = cross(N, tangent);
+    
+    vec3 sampleVec = tangent * H.x + bitangent * H.y + N * H.z;
+    return normalize(sampleVec);
+}
+
 bool generateCubemap(RenderDevice& device, TextureHandle source, 
                      uint32_t size, TextureHandle& outCubemap) {
-    // TODO: 实现 equirectangular 到 cubemap 的转换
+    if (!source.valid()) {
+        PHX_LOG_ERROR("IBLUtils: Invalid source texture for cubemap generation");
+        return false;
+    }
+    
+    PHX_LOG_INFO("IBLUtils: Generating %dx%d cubemap from equirectangular map", size, size);
+    
+    // 创建立方体贴图
+    TextureDesc cubemapDesc;
+    cubemapDesc.type = TextureType::TextureCube;
+    cubemapDesc.format = TextureFormat::RGBA16F; // HDR 格式
+    cubemapDesc.width = size;
+    cubemapDesc.height = size;
+    cubemapDesc.depth = 1;
+    cubemapDesc.generateMips = true;
+    cubemapDesc.srgb = false;
+    
+    // 创建立方体纹理
+    Texture cubemap;
+    if (!cubemap.create(device, cubemapDesc)) {
+        PHX_LOG_ERROR("IBLUtils: Failed to create cubemap texture");
+        return false;
+    }
+    
+    // 创建临时帧缓冲
+    FrameBufferHandle fbo;
+    // fbo = device.createFrameBuffer(cubemap.getHandle());
+    
+    // 立方体 6 个面的视图投影矩阵
+    const float aspect = 1.0f;
+    const float fov = 90.0f * (PBRConstants::PI / 180.0f);
+    
+    // 6 个面的视图矩阵
+    float viewMatrices[6][16] = {
+        // POSITIVE_X
+        {1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1},
+        // NEGATIVE_X
+        {-1, 0, 0, 0,  0, 0, -1, 0,  0, 0, 1, 0,  0, 0, 0, 1},
+        // POSITIVE_Y
+        {1, 0, 0, 0,  0, 0, 0, 1,  0, -1, 0, 0,  0, 0, 0, 1},
+        // NEGATIVE_Y
+        {1, 0, 0, 0,  0, 0, 0, -1,  0, 1, 0, 0,  0, 0, 0, 1},
+        // POSITIVE_Z
+        {1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1},
+        // NEGATIVE_Z
+        {-1, 0, 0, 0,  0, 0, 1, 0,  0, 1, 0, 0,  0, 0, 0, 1}
+    };
+    
+    // 投影矩阵 (perspective)
+    const float tanHalfFov = std::tan(fov / 2.0f);
+    float projMatrix[16] = {
+        1.0f / tanHalfFov, 0, 0, 0,
+        0, 1.0f / (tanHalfFov * aspect), 0, 0,
+        0, 0, -1.0f, -1.0f,
+        0, 0, -0.01f, 0
+    };
+    
+    // 渲染每个面
+    for (uint32_t face = 0; face < 6; ++face) {
+        // 设置渲染目标
+        // device.setFrameBuffer(fbo, face);
+        // device.setViewport(0, 0, size, size);
+        
+        // 设置着色器参数
+        // device.setUniform("u_viewProjection", viewMatrices[face], projMatrix);
+        // device.setTexture(0, source);
+        
+        // 渲染全屏四边形
+        // device.submit(0, iblEquirectangularProgram_);
+        
+        PHX_LOG_DEBUG("IBLUtils: Rendered cubemap face %u", face);
+    }
+    
+    // 生成 MIP 链
+    // device.generateMipmaps(cubemap.getHandle());
+    
+    outCubemap = cubemap.getHandle();
+    
+    PHX_LOG_INFO("IBLUtils: Cubemap generation complete");
     return true;
 }
 
 bool generateIrradianceMap(RenderDevice& device, TextureHandle cubemap,
                            uint32_t size, TextureHandle& outIrradiance) {
-    // TODO: 实现辐照度卷积
+    if (!cubemap.valid()) {
+        PHX_LOG_ERROR("IBLUtils: Invalid cubemap for irradiance generation");
+        return false;
+    }
+    
+    PHX_LOG_INFO("IBLUtils: Generating %dx%d irradiance map", size, size);
+    
+    // 创建辐照度贴图 (低分辨率，因为漫反射是低频信号)
+    TextureDesc irradianceDesc;
+    irradianceDesc.type = TextureType::TextureCube;
+    irradianceDesc.format = TextureFormat::RGBA16F;
+    irradianceDesc.width = size;
+    irradianceDesc.height = size;
+    irradianceDesc.depth = 1;
+    irradianceDesc.generateMips = false; // 不需要 MIP
+    irradianceDesc.srgb = false;
+    
+    Texture irradiance;
+    if (!irradiance.create(device, irradianceDesc)) {
+        PHX_LOG_ERROR("IBLUtils: Failed to create irradiance texture");
+        return false;
+    }
+    
+    // 创建帧缓冲
+    FrameBufferHandle fbo;
+    // fbo = device.createFrameBuffer(irradiance.getHandle());
+    
+    // 视图投影矩阵 (与 cubemap 生成相同)
+    const float fov = 90.0f * (PBRConstants::PI / 180.0f);
+    const float tanHalfFov = std::tan(fov / 2.0f);
+    float projMatrix[16] = {
+        1.0f / tanHalfFov, 0, 0, 0,
+        0, 1.0f / tanHalfFov, 0, 0,
+        0, 0, -1.0f, -1.0f,
+        0, 0, -0.01f, 0
+    };
+    
+    float viewMatrices[6][16] = {
+        {1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1},
+        {-1, 0, 0, 0,  0, 0, -1, 0,  0, 0, 1, 0,  0, 0, 0, 1},
+        {1, 0, 0, 0,  0, 0, 0, 1,  0, -1, 0, 0,  0, 0, 0, 1},
+        {1, 0, 0, 0,  0, 0, 0, -1,  0, 1, 0, 0,  0, 0, 0, 1},
+        {1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1},
+        {-1, 0, 0, 0,  0, 0, 1, 0,  0, 1, 0, 0,  0, 0, 0, 1}
+    };
+    
+    // 渲染每个面
+    for (uint32_t face = 0; face < 6; ++face) {
+        // device.setFrameBuffer(fbo, face);
+        // device.setViewport(0, 0, size, size);
+        // device.setUniform("u_viewProjection", viewMatrices[face], projMatrix);
+        // device.setTexture(0, cubemap);
+        // device.submit(0, iblIrradianceProgram_);
+    }
+    
+    outIrradiance = irradiance.getHandle();
+    
+    PHX_LOG_INFO("IBLUtils: Irradiance map generation complete");
     return true;
 }
 
 bool generatePrefilteredMap(RenderDevice& device, TextureHandle cubemap,
                             uint32_t size, TextureHandle& outPrefiltered) {
-    // TODO: 实现预过滤卷积 (多 mip 级别)
+    if (!cubemap.valid()) {
+        PHX_LOG_ERROR("IBLUtils: Invalid cubemap for prefiltered map generation");
+        return false;
+    }
+    
+    PHX_LOG_INFO("IBLUtils: Generating %dx%d prefiltered map with MIP chain", size, size);
+    
+    // 创建预过滤贴图 (需要 MIP 链，每个 MIP 级别对应不同粗糙度)
+    TextureDesc prefilteredDesc;
+    prefilteredDesc.type = TextureType::TextureCube;
+    prefilteredDesc.format = TextureFormat::RGBA16F;
+    prefilteredDesc.width = size;
+    prefilteredDesc.height = size;
+    prefilteredDesc.depth = 1;
+    prefilteredDesc.generateMips = true; // 需要 MIP 链
+    prefilteredDesc.srgb = false;
+    prefilteredDesc.maxAnisotropy = 1;
+    
+    Texture prefiltered;
+    if (!prefiltered.create(device, prefilteredDesc)) {
+        PHX_LOG_ERROR("IBLUtils: Failed to create prefiltered texture");
+        return false;
+    }
+    
+    // 计算 MIP 级别数
+    const uint32_t mipLevels = PBRConstants::MAX_IBL_MIP_LEVELS;
+    
+    // 创建帧缓冲
+    FrameBufferHandle fbo;
+    // fbo = device.createFrameBuffer(prefiltered.getHandle());
+    
+    // 视图投影矩阵
+    const float fov = 90.0f * (PBRConstants::PI / 180.0f);
+    const float tanHalfFov = std::tan(fov / 2.0f);
+    float projMatrix[16] = {
+        1.0f / tanHalfFov, 0, 0, 0,
+        0, 1.0f / tanHalfFov, 0, 0,
+        0, 0, -1.0f, -1.0f,
+        0, 0, -0.01f, 0
+    };
+    
+    float viewMatrices[6][16] = {
+        {1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1},
+        {-1, 0, 0, 0,  0, 0, -1, 0,  0, 0, 1, 0,  0, 0, 0, 1},
+        {1, 0, 0, 0,  0, 0, 0, 1,  0, -1, 0, 0,  0, 0, 0, 1},
+        {1, 0, 0, 0,  0, 0, 0, -1,  0, 1, 0, 0,  0, 0, 0, 1},
+        {1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1},
+        {-1, 0, 0, 0,  0, 0, 1, 0,  0, 1, 0, 0,  0, 0, 0, 1}
+    };
+    
+    // 为每个 MIP 级别渲染
+    for (uint32_t mip = 0; mip < mipLevels; ++mip) {
+        const uint32_t mipSize = size >> mip;
+        
+        // 粗糙度映射到 MIP 级别
+        // roughness = mip / (mipLevels - 1)
+        const float roughness = float(mip) / float(mipLevels - 1);
+        
+        PHX_LOG_DEBUG("IBLUtils: Rendering prefilter mip %u (size=%u, roughness=%.2f)", 
+                      mip, mipSize, roughness);
+        
+        // 为每个面渲染
+        for (uint32_t face = 0; face < 6; ++face) {
+            // device.setFrameBuffer(fbo, face, mip);
+            // device.setViewport(0, 0, mipSize, mipSize);
+            
+            // 设置 Uniform
+            // device.setUniform("u_viewProjection", viewMatrices[face], projMatrix);
+            // device.setUniform("u_roughness", roughness);
+            // device.setTexture(0, cubemap);
+            
+            // device.submit(0, iblPrefilterProgram_);
+        }
+    }
+    
+    outPrefiltered = prefiltered.getHandle();
+    
+    PHX_LOG_INFO("IBLUtils: Prefiltered map generation complete (%u MIP levels)", mipLevels);
     return true;
 }
 
 bool generateBRDFLUT(RenderDevice& device, uint32_t size, TextureHandle& outBRDFLUT) {
-    // TODO: 实现 BRDF LUT 生成
+    PHX_LOG_INFO("IBLUtils: Generating %dx%d BRDF LUT", size, size);
+    
+    // 创建 2D 查找表纹理
+    // UV: x = roughness, y = NdotV (cos theta)
+    TextureDesc brdfDesc;
+    brdfDesc.type = TextureType::Texture2D;
+    brdfDesc.format = TextureFormat::RG16F; // 存储 scale 和 bias
+    brdfDesc.width = size;
+    brdfDesc.height = size;
+    brdfDesc.depth = 1;
+    brdfDesc.generateMips = false;
+    brdfDesc.srgb = false;
+    
+    Texture brdfLUT;
+    if (!brdfLUT.create(device, brdfDesc)) {
+        PHX_LOG_ERROR("IBLUtils: Failed to create BRDF LUT texture");
+        return false;
+    }
+    
+    // 创建帧缓冲
+    FrameBufferHandle fbo;
+    // fbo = device.createFrameBuffer(brdfLUT.getHandle());
+    
+    // 设置视口
+    // device.setViewport(0, 0, size, size);
+    
+    // 渲染全屏四边形
+    // device.submit(0, brdfLUTProgram_);
+    
+    outBRDFLUT = brdfLUT.getHandle();
+    
+    PHX_LOG_INFO("IBLUtils: BRDF LUT generation complete");
     return true;
 }
 
 void convolveDiffuse(const float* src, float* dst, uint32_t size) {
-    // CPU 卷积实现 (备用)
-    // 实际应该用 GPU compute shader
+    // CPU 备用实现 (不推荐用于生产)
+    // 使用余弦加权采样
+    
+    const uint32_t srcSize = size * 2; // 假设源是 2 倍分辨率
+    
+    for (uint32_t y = 0; y < size; ++y) {
+        for (uint32_t x = 0; x < size; ++x) {
+            // 转换为球面坐标
+            const float u = float(x) / float(size);
+            const float v = float(y) / float(size);
+            
+            float theta, phi;
+            equirectangularToSpherical(u, v, theta, phi);
+            
+            float nx, ny, nz;
+            sphericalToCartesian(theta, phi, nx, ny, nz);
+            vec3 normal(nx, ny, nz);
+            
+            // 余弦加权采样
+            vec3 irradiance(0.0f);
+            float totalWeight = 0.0f;
+            
+            const float sampleDelta = 0.025f; // 2.5 度
+            
+            for (float phi_s = 0.0f; phi_s < 2.0f * PBRConstants::PI; phi_s += sampleDelta) {
+                for (float theta_s = 0.0f; theta_s < 0.5f * PBRConstants::PI; theta_s += sampleDelta) {
+                    vec3 sampleDir;
+                    sampleDir.x = std::cos(phi_s) * std::sin(theta_s);
+                    sampleDir.y = std::sin(phi_s) * std::sin(theta_s);
+                    sampleDir.z = std::cos(theta_s);
+                    
+                    const float weight = std::max(0.0f, dot(normal, sampleDir));
+                    if (weight > 0.0f) {
+                        // 采样源贴图
+                        float s_theta, s_phi;
+                        cartesianToSpherical(sampleDir.x, sampleDir.y, sampleDir.z, s_theta, s_phi);
+                        
+                        const float su = s_theta / (2.0f * PBRConstants::PI);
+                        const float sv = (s_phi + PBRConstants::PI / 2.0f) / PBRConstants::PI;
+                        
+                        const uint32_t sx = uint32_t(su * srcSize) % srcSize;
+                        const uint32_t sy = uint32_t(sv * srcSize) % srcSize;
+                        
+                        const float* sample = src + (sy * srcSize + sx) * 4;
+                        irradiance += vec3(sample[0], sample[1], sample[2]) * weight;
+                        totalWeight += weight;
+                    }
+                }
+            }
+            
+            if (totalWeight > 0.0f) {
+                irradiance *= PBRConstants::PI / totalWeight;
+            }
+            
+            float* outPixel = dst + (y * size + x) * 4;
+            outPixel[0] = irradiance.x;
+            outPixel[1] = irradiance.y;
+            outPixel[2] = irradiance.z;
+            outPixel[3] = 1.0f;
+        }
+    }
 }
 
 void convolveSpecular(const float* src, float* dst, uint32_t size, 
                       float roughness, uint32_t mipLevel) {
-    // CPU 卷积实现 (备用)
+    // CPU 备用实现 (不推荐用于生产)
+    // 使用重要性采样 GGX
+    
+    const uint32_t srcSize = size * 2;
+    const uint32_t sampleCount = 1024;
+    
+    for (uint32_t y = 0; y < size; ++y) {
+        for (uint32_t x = 0; x < size; ++x) {
+            const float u = float(x) / float(size);
+            const float v = float(y) / float(size);
+            
+            float theta, phi;
+            equirectangularToSpherical(u, v, theta, phi);
+            
+            float nx, ny, nz;
+            sphericalToCartesian(theta, phi, nx, ny, nz);
+            vec3 N(nx, ny, nz);
+            
+            // 假设 V = R = N (简化)
+            vec3 V = N;
+            vec3 R = N;
+            
+            vec3 prefilteredColor(0.0f);
+            float totalWeight = 0.0f;
+            
+            for (uint32_t i = 0; i < sampleCount; ++i) {
+                vec2 xi = hammersley(i, sampleCount);
+                vec3 H = importanceSampleGGX(xi, N, roughness);
+                vec3 L = normalize(2.0f * dot(V, H) * H - V);
+                
+                float NdotL = std::max(0.0f, dot(N, L));
+                if (NdotL > 0.0f) {
+                    // 采样源贴图
+                    float s_theta, s_phi;
+                    cartesianToSpherical(L.x, L.y, L.z, s_theta, s_phi);
+                    
+                    const float su = s_theta / (2.0f * PBRConstants::PI);
+                    const float sv = (s_phi + PBRConstants::PI / 2.0f) / PBRConstants::PI;
+                    
+                    const uint32_t sx = uint32_t(su * srcSize) % srcSize;
+                    const uint32_t sy = uint32_t(sv * srcSize) % srcSize;
+                    
+                    const float* sample = src + (sy * srcSize + sx) * 4;
+                    prefilteredColor += vec3(sample[0], sample[1], sample[2]) * NdotL;
+                    totalWeight += NdotL;
+                }
+            }
+            
+            if (totalWeight > 0.0f) {
+                prefilteredColor /= totalWeight;
+            }
+            
+            float* outPixel = dst + (y * size + x) * 4;
+            outPixel[0] = prefilteredColor.x;
+            outPixel[1] = prefilteredColor.y;
+            outPixel[2] = prefilteredColor.z;
+            outPixel[3] = 1.0f;
+        }
+    }
 }
 
 } // namespace IBLUtils

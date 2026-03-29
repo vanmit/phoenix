@@ -1,7 +1,9 @@
 #include "phoenix/render/Shader.hpp"
 #include <bgfx/bgfx.h>
+#include <shaderc/shaderc.hpp>
 #include <cstring>
 #include <algorithm>
+#include <fstream>
 
 namespace phoenix {
 namespace render {
@@ -57,12 +59,97 @@ void ShaderCompiler::shutdown() {
 
 bool ShaderCompiler::compileToSpirv(const std::string& source, const SpirvOptions& options,
                                      std::vector<uint32_t>& outSpirv, std::string& outError) {
-    // 实际实现需要 glslang/shaderc
-    // 这里提供简化版本
+    shaderc::Compiler compiler;
+    shaderc::CompileOptions compileOptions;
     
-    // 临时实现：直接返回错误，需要链接 shaderc
-    outError = "SPIR-V compilation requires shaderc library";
-    return false;
+    // Set optimization level
+    switch (options.optimization) {
+        case SpirvOptions::OptimizerLevel::None:
+            compileOptions.SetOptimizationLevel(shaderc_optimization_level_zero);
+            break;
+        case SpirvOptions::OptimizerLevel::Size:
+            compileOptions.SetOptimizationLevel(shaderc_optimization_level_size);
+            break;
+        case SpirvOptions::OptimizerLevel::Performance:
+        default:
+            compileOptions.SetOptimizationLevel(shaderc_optimization_level_performance);
+            break;
+    }
+    
+    // Set target environment
+    compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+    
+    // Add defines
+    for (const auto& define : options.defines) {
+        // shaderc handles defines through source preprocessing
+    }
+    
+    // Determine shader kind
+    shaderc_shader_kind kind;
+    switch (options.stage) {
+        case ShaderStage::Vertex: kind = shaderc_vertex_shader; break;
+        case ShaderStage::Fragment: kind = shaderc_fragment_shader; break;
+        case ShaderStage::Compute: kind = shaderc_compute_shader; break;
+        case ShaderStage::Geometry: kind = shaderc_geometry_shader; break;
+        case ShaderStage::Hull: kind = shaderc_tess_control_shader; break;
+        case ShaderStage::Domain: kind = shaderc_tess_evaluation_shader; break;
+        default:
+            outError = "Unknown shader stage";
+            return false;
+    }
+    
+    auto result = compiler.CompileGlslToSpv(source, kind, "shader.glsl", compileOptions);
+    
+    if (result.GetCompilationStatus() != shaderc_compilation_status_success) {
+        outError = "Shader compilation failed: " + std::string(result.GetErrorMessage());
+        return false;
+    }
+    
+    outSpirv.assign(result.cbegin(), result.cend());
+    return true;
+}
+
+bool ShaderCompiler::compileToSpirv(const std::string& source, const std::string& outputPath, 
+                                     ShaderType type) {
+    shaderc::Compiler compiler;
+    shaderc::CompileOptions options;
+    
+    options.SetOptimizationLevel(shaderc_optimization_level_performance);
+    options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+    
+    shaderc_shader_kind kind;
+    switch (type) {
+        case ShaderType::Vertex: kind = shaderc_vertex_shader; break;
+        case ShaderType::Fragment: kind = shaderc_fragment_shader; break;
+        case ShaderType::Compute: kind = shaderc_compute_shader; break;
+        default: 
+            Logger::error("Unsupported shader type for GLSL compilation");
+            return false;
+    }
+    
+    auto result = compiler.CompileGlslToSpv(source, kind, "shader.glsl", options);
+    
+    if (result.GetCompilationStatus() != shaderc_compilation_status_success) {
+        Logger::error("Shader compilation failed: " + std::string(result.GetErrorMessage()));
+        return false;
+    }
+    
+    // Write SPIR-V to file
+    std::ofstream out(outputPath, std::ios::binary);
+    if (!out.is_open()) {
+        Logger::error("Failed to open output file: " + outputPath);
+        return false;
+    }
+    
+    out.write(reinterpret_cast<const char*>(result.cbegin()), 
+              result.size() * sizeof(uint32_t));
+    
+    if (!out.good()) {
+        Logger::error("Failed to write SPIR-V to file: " + outputPath);
+        return false;
+    }
+    
+    return true;
 }
 
 bool ShaderCompiler::compileFileToSpirv(const std::filesystem::path& path, 

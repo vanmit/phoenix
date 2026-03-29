@@ -4,6 +4,8 @@
 #include "RenderDevice.hpp"
 #include "Resources.hpp"
 #include "Shader.hpp"
+#include "../math/vector.hpp"
+#include "../math/matrix.hpp"
 #include <vector>
 #include <memory>
 #include <functional>
@@ -243,6 +245,62 @@ struct ChromaticAberrationConfig {
     float intensity = 0.003f;
     float sampleCount = 3.0f;
     bool useSpectral = false;
+};
+
+/**
+ * @brief 运动模糊配置
+ */
+struct MotionBlurConfig {
+    bool enabled = true;
+    float shutterSpeed = 1000.0f;     // 快门速度 (1/1000 秒)
+    float intensity = 1.0f;           // 模糊强度
+    uint32_t sampleCount = 16;        // 采样数
+    float maxBlurDistance = 50.0f;    // 最大模糊距离 (像素)
+    bool useCameraMotion = true;      // 相机运动模糊
+    bool useObjectMotion = true;      // 物体运动模糊
+    float cameraVelocityScale = 1.0f; // 相机速度缩放
+    bool useDepthFade = true;         // 深度衰减
+    float depthFadeStart = 0.5f;      // 深度衰减起始
+    float depthFadeEnd = 1.0f;        // 深度衰减结束
+};
+
+/**
+ * @brief 景深配置
+ */
+struct DepthOfFieldConfig {
+    bool enabled = true;
+    enum class Quality {
+        Low,      // 快速近似
+        Medium,   // 平衡质量
+        High,     // 高质量
+        Ultra     // 极致质量 (Bokeh)
+    } quality = Quality::High;
+    
+    float focalDistance = 10.0f;      // 焦距 (米)
+    float focalLength = 50.0f;        // 镜头焦距 (mm)
+    float aperture = 2.8f;            // 光圈 (f-stop)
+    float maxCoC = 8.0f;              // 最大弥散圆 (像素)
+    uint32_t sampleCount = 16;        // 采样数
+    float nearBlur = 1.0f;            // 前景模糊强度
+    float farBlur = 1.0f;             // 背景模糊强度
+    math::Vec2 sensorSize = math::Vec2(36, 24);   // 传感器尺寸 (mm，全画幅)
+    
+    // Bokeh 设置
+    enum class BokehShape {
+        Circle,     // 圆形
+        Hexagon,    // 六边形
+        Octagon     // 八边形
+    } bokehShape = BokehShape::Circle;
+    float bokehRotation = 0.0f;       // Bokeh 旋转
+    float bokehIntensity = 1.0f;      // Bokeh 强度
+    bool useAnamorphic = false;       // 变形镜头 Bokeh
+    float anamorphicRatio = 1.5f;     // 变形比率
+    
+    // 高级设置
+    bool useForegroundSeparation = true;  // 前景分离
+    float foregroundThreshold = 0.3f;     // 前景阈值
+    bool useVignette = false;             // 渐晕效果
+    float vignetteIntensity = 0.3f;       // 渐晕强度
 };
 
 /**
@@ -508,6 +566,201 @@ private:
 };
 
 /**
+ * @brief TAA (时间性抗锯齿) 效果
+ */
+class TAAEffect : public PostProcessEffect {
+public:
+    TAAEffect() = default;
+    
+    [[nodiscard]] PostProcessEffectType getType() const override { 
+        return PostProcessEffectType::TAA; 
+    }
+    [[nodiscard]] const char* getName() const override { return "TAA"; }
+    
+    bool initialize(RenderDevice& device, ShaderCompiler& compiler) override;
+    void shutdown() override;
+    void render(RenderDevice& device, TextureHandle input, 
+                TextureHandle output, uint32_t viewId) override;
+    [[nodiscard]] bool isEnabled() const override { return config_.enabled; }
+    void setEnabled(bool enabled) override { config_.enabled = enabled; }
+    [[nodiscard]] uint32_t getWidth() const override { width_; }
+    [[nodiscard]] uint32_t getHeight() const override { height_; }
+    void resize(uint32_t width, uint32_t height) override;
+    
+    void setConfig(const TAAConfig& config) { config_ = config; }
+    [[nodiscard]] const TAAConfig& getConfig() const { return config_; }
+    
+    /**
+     * @brief 设置历史帧纹理
+     */
+    void setHistoryTexture(TextureHandle history) { historyTexture_ = history; }
+    
+    /**
+     * @brief 获取历史帧纹理
+     */
+    [[nodiscard]] TextureHandle getHistoryTexture() const { return historyTexture_; }
+    
+    /**
+     * @brief 重置历史
+     */
+    void resetHistory();
+    
+    /**
+     * @brief 设置运动矢量纹理
+     */
+    void setMotionVectorTexture(TextureHandle motion) { motionVectorTexture_ = motion; }
+    
+    /**
+     * @brief 设置深度纹理
+     */
+    void setDepthTexture(TextureHandle depth) { depthTexture_ = depth; }
+    
+    /**
+     * @brief 更新变换矩阵
+     */
+    void setTransformMatrices(const math::Matrix4& prevViewProj, const math::Matrix4& currViewProj,
+                              const math::Matrix4& inverseProjection);
+    
+private:
+    RenderDevice* device_ = nullptr;
+    TAAConfig config_;
+    uint32_t width_ = 0;
+    uint32_t height_ = 0;
+    
+    ProgramHandle taaProgram_;
+    UniformBuffer taaUniforms_;
+    
+    TextureHandle historyTexture_;
+    TextureHandle motionVectorTexture_;
+    TextureHandle depthTexture_;
+    FrameBufferHandle historyFrameBuffer_;
+    
+    math::Matrix4 prevViewProj_;
+    math::Matrix4 currViewProj_;
+    math::Matrix4 inverseProjection_;
+    
+    bool historyValid_ = false;
+    uint32_t frameCount_ = 0;
+    
+    void createHistoryTexture();
+    void updateUniforms();
+};
+
+/**
+ * @brief 运动模糊效果
+ */
+class MotionBlurEffect : public PostProcessEffect {
+public:
+    MotionBlurEffect() = default;
+    
+    [[nodiscard]] PostProcessEffectType getType() const override { 
+        return PostProcessEffectType::MotionBlur; 
+    }
+    [[nodiscard]] const char* getName() const override { return "MotionBlur"; }
+    
+    bool initialize(RenderDevice& device, ShaderCompiler& compiler) override;
+    void shutdown() override;
+    void render(RenderDevice& device, TextureHandle input, 
+                TextureHandle output, uint32_t viewId) override;
+    [[nodiscard]] bool isEnabled() const override { return config_.enabled; }
+    void setEnabled(bool enabled) override { config_.enabled = enabled; }
+    [[nodiscard]] uint32_t getWidth() const override { width_; }
+    [[nodiscard]] uint32_t getHeight() const override { height_; }
+    void resize(uint32_t width, uint32_t height) override;
+    
+    void setConfig(const MotionBlurConfig& config) { config_ = config; }
+    [[nodiscard]] const MotionBlurConfig& getConfig() const { return config_; }
+    
+    /**
+     * @brief 设置运动矢量纹理
+     */
+    void setMotionVectorTexture(TextureHandle motion) { motionVectorTexture_ = motion; }
+    
+    /**
+     * @brief 设置深度纹理
+     */
+    void setDepthTexture(TextureHandle depth) { depthTexture_ = depth; }
+    
+    /**
+     * @brief 设置相机速度
+     */
+    void setCameraVelocity(const math::Vec3& velocity) { cameraVelocity_ = velocity; }
+    
+private:
+    RenderDevice* device_ = nullptr;
+    MotionBlurConfig config_;
+    uint32_t width_ = 0;
+    uint32_t height_ = 0;
+    
+    ProgramHandle motionBlurProgram_;
+    UniformBuffer motionBlurUniforms_;
+    
+    TextureHandle motionVectorTexture_;
+    TextureHandle depthTexture_;
+    
+    math::Vec3 cameraVelocity_;
+    
+    void updateUniforms();
+};
+
+/**
+ * @brief 景深效果
+ */
+class DepthOfFieldEffect : public PostProcessEffect {
+public:
+    DepthOfFieldEffect() = default;
+    
+    [[nodiscard]] PostProcessEffectType getType() const override { 
+        return PostProcessEffectType::DepthOfField; 
+    }
+    [[nodiscard]] const char* getName() const override { return "DepthOfField"; }
+    
+    bool initialize(RenderDevice& device, ShaderCompiler& compiler) override;
+    void shutdown() override;
+    void render(RenderDevice& device, TextureHandle input, 
+                TextureHandle output, uint32_t viewId) override;
+    [[nodiscard]] bool isEnabled() const override { return config_.enabled; }
+    void setEnabled(bool enabled) override { config_.enabled = enabled; }
+    [[nodiscard]] uint32_t getWidth() const override { width_; }
+    [[nodiscard]] uint32_t getHeight() const override { height_; }
+    void resize(uint32_t width, uint32_t height) override;
+    
+    void setConfig(const DepthOfFieldConfig& config) { config_ = config; }
+    [[nodiscard]] const DepthOfFieldConfig& getConfig() const { return config_; }
+    
+    /**
+     * @brief 设置深度纹理
+     */
+    void setDepthTexture(TextureHandle depth) { depthTexture_ = depth; }
+    
+    /**
+     * @brief 设置焦距 (自动对焦)
+     */
+    void setFocalDistance(float distance) { config_.focalDistance = distance; }
+    
+    /**
+     * @brief 设置光圈
+     */
+    void setAperture(float fstop) { config_.aperture = fstop; }
+    
+private:
+    RenderDevice* device_ = nullptr;
+    DepthOfFieldConfig config_;
+    uint32_t width_ = 0;
+    uint32_t height_ = 0;
+    
+    ProgramHandle dofProgram_;
+    UniformBuffer dofUniforms_;
+    
+    TextureHandle depthTexture_;
+    TextureHandle cocTexture_;       // 预计算的 CoC 纹理
+    FrameBufferHandle cocFrameBuffer_;
+    
+    void updateUniforms();
+    void calculateCoCTexture(RenderDevice& device, uint32_t viewId);
+};
+
+/**
  * @brief 后处理效果链
  */
 class PostProcessChain {
@@ -631,6 +884,17 @@ public:
     void enableFXAA(bool enabled) { fxaaConfig_.enabled = enabled; }
     void enableTAA(bool enabled) { taaConfig_.enabled = enabled; }
     void enableColorGrading(bool enabled) { colorGradingConfig_.enabled = enabled; }
+    void enableMotionBlur(bool enabled) { motionBlurConfig_.enabled = enabled; }
+    void enableDepthOfField(bool enabled) { depthOfFieldConfig_.enabled = enabled; }
+    
+    // 质量档位
+    enum class QualityPreset {
+        Low,
+        Medium,
+        High,
+        Ultra
+    };
+    void setQualityPreset(QualityPreset preset);
     
     // 设置 G-Buffer (用于 SSAO)
     void setGBufferTextures(TextureHandle normal, TextureHandle depth);
@@ -662,6 +926,8 @@ private:
     VignetteConfig vignetteConfig_;
     FilmGrainConfig filmGrainConfig_;
     ChromaticAberrationConfig chromaticAberrationConfig_;
+    MotionBlurConfig motionBlurConfig_;
+    DepthOfFieldConfig depthOfFieldConfig_;
     
     // 效果
     std::unique_ptr<BloomEffect> bloomEffect_;
@@ -669,6 +935,9 @@ private:
     std::unique_ptr<SSAOEffect> ssaoEffect_;
     std::unique_ptr<FXAAEffect> fxaaEffect_;
     std::unique_ptr<ColorGradingEffect> colorGradingEffect_;
+    std::unique_ptr<TAAEffect> taaEffect_;
+    std::unique_ptr<MotionBlurEffect> motionBlurEffect_;
+    std::unique_ptr<DepthOfFieldEffect> depthOfFieldEffect_;
     
     // 中间纹理
     std::vector<TextureHandle> intermediateTextures_;

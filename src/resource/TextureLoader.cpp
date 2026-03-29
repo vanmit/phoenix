@@ -3,9 +3,10 @@
 #include <algorithm>
 #include <cstring>
 
-// Forward declare stb_image
-// #define STB_IMAGE_IMPLEMENTATION
-// #include <stb_image.h>
+// stb_image for loading PNG/JPEG
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_FAILURE_USERMSG
+#include <stb_image.h>
 
 namespace phoenix::resource {
 
@@ -86,10 +87,18 @@ size_t TextureLoader::estimateMemoryUsage(const std::string& path) const {
     
     // Compressed textures: ~1x file size
     // Uncompressed (PNG/JPEG): ~4x decompressed size
-    std::string ext = path.substr(path.size() - 4);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::string ext;
+    if (path.size() >= 5) {
+        ext = path.substr(path.size() - 5);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    } else if (path.size() >= 4) {
+        ext = path.substr(path.size() - 4);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    } else {
+        ext = "";
+    }
     
-    if (ext == ".ktx" || ext == ".dds" || ext == "t2") {
+    if (ext == ".ktx" || ext == ".ktx2" || ext == ".dds") {
         return static_cast<size_t>(size) * 2;  // MIP levels
     }
     
@@ -103,26 +112,62 @@ std::future<std::unique_ptr<Texture>> TextureLoader::loadAsync(const std::string
 }
 
 std::unique_ptr<Texture> TextureLoader::load(const std::string& path) {
-    // Determine format from extension
-    std::string ext = path.size() >= 4 ? path.substr(path.size() - 4) : "";
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    // 获取小写扩展名
+    auto getExtension = [](const std::string& path) -> std::string {
+        if (path.size() < 4) return "";
+        
+        // 检查 6 字符扩展名
+        if (path.size() >= 6) {
+            std::string ext = path.substr(path.size() - 6);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".basis") return ext;
+        }
+        
+        // 检查 5 字符扩展名
+        if (path.size() >= 5) {
+            std::string ext = path.substr(path.size() - 5);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".jpeg" || ext == ".ktx2") return ext;
+        }
+        
+        // 检查 4 字符扩展名
+        if (path.size() >= 4) {
+            std::string ext = path.substr(path.size() - 4);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".png" || ext == ".jpg" || ext == ".dds" || ext == ".ktx") 
+                return ext;
+        }
+        
+        return "";
+    };
     
-    AssetType type = AssetType::Unknown;
+    std::string ext = getExtension(path);
     
-    if (ext == ".png") type = AssetType::Texture_PNG;
-    else if (ext == ".jpg" || ext == "peg") type = AssetType::Texture_JPEG;
-    else if (ext == ".ktx" || ext == "tx2") type = AssetType::Texture_KTX2;
-    else if (ext == ".dds") type = AssetType::Texture_DDS;
-    else if (ext == "sis") type = AssetType::Texture_BASIS;
-    
-    if (type == AssetType::Unknown) {
-        auto texture = std::make_unique<Texture>();
-        texture->loadState = LoadState::Failed;
-        texture->loadError = "Unknown texture extension";
-        return texture;
+    // 根据扩展名加载
+    if (ext == ".basis") {
+        return loadByType(path, AssetType::Texture_BASIS);
+    } else if (ext == ".jpeg") {
+        return loadByType(path, AssetType::Texture_JPEG);
+    } else if (ext == ".ktx2") {
+        return loadByType(path, AssetType::Texture_KTX2);
+    } else if (ext == ".png") {
+        return loadByType(path, AssetType::Texture_PNG);
+    } else if (ext == ".jpg") {
+        return loadByType(path, AssetType::Texture_JPEG);
+    } else if (ext == ".dds") {
+        return loadByType(path, AssetType::Texture_DDS);
+    } else if (ext == ".ktx") {
+        return loadByType(path, AssetType::Texture_KTX);
     }
     
-    // Load based on format
+    // Unknown extension
+    auto texture = std::make_unique<Texture>();
+    texture->loadState = LoadState::Failed;
+    texture->loadError = "Unknown texture extension";
+    return texture;
+}
+
+std::unique_ptr<Texture> TextureLoader::loadByType(const std::string& path, AssetType type) {
     switch (type) {
         case AssetType::Texture_PNG: return loadPNG(path);
         case AssetType::Texture_JPEG: return loadJPEG(path);
@@ -131,6 +176,12 @@ std::unique_ptr<Texture> TextureLoader::load(const std::string& path) {
         case AssetType::Texture_BASIS: return loadBasis(path);
         default: break;
     }
+    
+    auto texture = std::make_unique<Texture>();
+    texture->loadState = LoadState::Failed;
+    texture->loadError = "Unsupported texture format";
+    return texture;
+}
     
     auto texture = std::make_unique<Texture>();
     texture->loadState = LoadState::Failed;
@@ -147,14 +198,13 @@ std::unique_ptr<Texture> TextureLoader::loadFromMemory(const uint8_t* data, size
         case AssetType::Texture_PNG:
         case AssetType::Texture_JPEG: {
             // Use stb_image to load
-            /*
             int width, height, channels;
             stbi_uc* pixels = stbi_load_from_memory(data, static_cast<int>(size),
                                                      &width, &height, &channels, 4);
             
             if (!pixels) {
                 texture->loadState = LoadState::Failed;
-                texture->loadError = "Failed to decode image";
+                texture->loadError = "Failed to decode image: " + std::string(stbi_failure_reason());
                 return texture;
             }
             
@@ -180,7 +230,6 @@ std::unique_ptr<Texture> TextureLoader::loadFromMemory(const uint8_t* data, size
             }
             
             texture->loadState = LoadState::Loaded;
-            */
             break;
         }
         
@@ -223,13 +272,12 @@ std::unique_ptr<Texture> TextureLoader::loadPNG(const std::string& path) {
     }
     
     // Load with stb_image
-    /*
     int width, height, channels;
     stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
     
     if (!pixels) {
         texture->loadState = LoadState::Failed;
-        texture->loadError = stbi_failure_reason();
+        texture->loadError = "Failed to load PNG: " + std::string(stbi_failure_reason());
         return texture;
     }
     
@@ -260,13 +308,6 @@ std::unique_ptr<Texture> TextureLoader::loadPNG(const std::string& path) {
     }
     
     texture->loadState = LoadState::Loaded;
-    */
-    
-    // Placeholder
-    texture->info.width = 256;
-    texture->info.height = 256;
-    texture->info.format = TextureFormat::RGBA8;
-    texture->loadState = LoadState::Loaded;
     
     return texture;
 }
@@ -277,12 +318,50 @@ std::unique_ptr<Texture> TextureLoader::loadJPEG(const std::string& path) {
     texture->assetType = AssetType::Texture_JPEG;
     texture->loadState = LoadState::Loading;
     
-    // Similar to PNG loading
-    // JPEG always has 3 channels (RGB), convert to RGBA
+    // Validate
+    auto validation = validate(path);
+    if (!validation.isValid) {
+        texture->loadState = LoadState::Failed;
+        texture->loadError = validation.error;
+        return texture;
+    }
     
-    texture->info.width = 256;
-    texture->info.height = 256;
+    // Load with stb_image
+    int width, height, channels;
+    stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+    
+    if (!pixels) {
+        texture->loadState = LoadState::Failed;
+        texture->loadError = "Failed to load JPEG: " + std::string(stbi_failure_reason());
+        return texture;
+    }
+    
+    texture->info.width = width;
+    texture->info.height = height;
+    texture->info.depth = 1;
     texture->info.format = TextureFormat::RGBA8;
+    texture->info.usage = TextureUsage::Sample | TextureUsage::MipMap;
+    
+    if (m_config.sRGB) {
+        texture->info.usage = texture->info.usage | TextureUsage::SRGB;
+    }
+    
+    MipLevel level;
+    level.level = 0;
+    level.width = width;
+    level.height = height;
+    level.depth = 1;
+    level.data.resize(size_t(width) * height * 4);
+    std::memcpy(level.data.data(), pixels, level.data.size());
+    level.dataSize = level.data.size();
+    
+    texture->mipLevels.push_back(level);
+    stbi_image_free(pixels);
+    
+    if (m_config.generateMipMaps) {
+        texture->generateMipMaps();
+    }
+    
     texture->loadState = LoadState::Loaded;
     
     return texture;

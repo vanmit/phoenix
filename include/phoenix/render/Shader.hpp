@@ -2,6 +2,7 @@
 
 #include "Types.hpp"
 #include "RenderDevice.hpp"
+#include <shaderc/shaderc.hpp>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -157,6 +158,15 @@ public:
      */
     bool compileToSpirv(const std::string& source, const SpirvOptions& options,
                         std::vector<uint32_t>& outSpirv, std::string& outError);
+
+    /**
+     * @brief 编译 GLSL 到 SPIR-V 文件 (简化版本)
+     * @param source 着色器源码
+     * @param outputPath 输出文件路径
+     * @param type 着色器类型
+     * @return 是否成功
+     */
+    bool compileToSpirv(const std::string& source, const std::string& outputPath, ShaderType type);
 
     /**
      * @brief 编译文件到 SPIR-V

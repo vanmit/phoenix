@@ -1,6 +1,8 @@
 /**
  * Phoenix Engine - WASM Loader
- * Mobile-optimized WASM module loader with performance monitoring
+ * 
+ * Refactored to use Phoenix Engine API with bgfx backend
+ * Includes improved error handling and clear failure messages
  */
 
 class PhoenixWasmLoader {
@@ -8,9 +10,8 @@ class PhoenixWasmLoader {
         this.module = null;
         this.instance = null;
         this.canvas = null;
-        this.gl = null;
-        this.loadingProgress = 0;
         this.isLoaded = false;
+        this.isWasmSupported = true;
         
         // Performance monitoring
         this.fps = 0;
@@ -18,25 +19,9 @@ class PhoenixWasmLoader {
         this.drawCalls = 0;
         this.triangleCount = 0;
         this.memoryUsage = 0;
-        this.frameHistory = [];
         
         // UI Elements
-        this.ui = {
-            loadingOverlay: null,
-            loadingProgress: null,
-            loadingStatus: null,
-            errorOverlay: null,
-            errorMessage: null,
-            fpsValue: null,
-            frameTimeValue: null,
-            drawCallsValue: null,
-            trianglesValue: null,
-            memoryValue: null,
-            hudToggle: null,
-            hudContent: null,
-            controlToggle: null,
-            controlContent: null
-        };
+        this.ui = {};
         
         // Control state
         this.controlState = {
@@ -52,42 +37,112 @@ class PhoenixWasmLoader {
             toneMapping: true,
             ssao: false,
             animation: 'idle',
-            blendSpeed: 0.3,
-            particleFire: false,
-            particleSmoke: false,
-            particleSparks: false
+            blendSpeed: 0.3
         };
     }
 
     async init() {
-        this.cacheUIElements();
-        this.setupEventListeners();
+        console.log('[PhoenixWasmLoader] Initializing...');
         
         try {
+            this.cacheUIElements();
+            this.setupEventListeners();
+            
+            // Check WASM support first
+            if (!this.checkWasmSupport()) {
+                throw new Error('您的浏览器不支持 WebAssembly。请使用现代浏览器 (Chrome 90+, Firefox 88+, Safari 15+, Edge 90+)');
+            }
+            
+            // Load WASM module
             await this.loadWasmModule();
+            
+            // Initialize GL/bgfx
             await this.initializeGL();
+            
+            // Start render loop
             this.startRenderLoop();
+            
+            // Hide loading overlay
             this.hideLoading();
+            
+            this.isLoaded = true;
+            console.log('[PhoenixWasmLoader] Initialization complete');
+            
         } catch (error) {
-            this.showError(error.message);
+            console.error('[PhoenixWasmLoader] Initialization failed:', error);
+            this.showError(this.getFriendlyErrorMessage(error));
         }
     }
 
+    /**
+     * Check if WebAssembly is supported
+     */
+    checkWasmSupport() {
+        if (typeof WebAssembly !== 'object') {
+            this.isWasmSupported = false;
+            return false;
+        }
+        
+        // Test basic WASM functionality
+        try {
+            const bin = new Uint8Array([
+                0x00, 0x61, 0x73, 0x6d, // WASM magic number
+                0x01, 0x00, 0x00, 0x00  // Version 1
+            ]);
+            new WebAssembly.Module(bin);
+            return true;
+        } catch (e) {
+            this.isWasmSupported = false;
+            return false;
+        }
+    }
+
+    /**
+     * Get user-friendly error message
+     */
+    getFriendlyErrorMessage(error) {
+        const msg = error.message.toLowerCase();
+        
+        if (msg.includes('webassembly') || msg.includes('wasm')) {
+            return 'WebAssembly 不支持：您的浏览器可能过旧或不支持 WASM。请升级到最新版本的 Chrome、Firefox、Safari 或 Edge。';
+        }
+        
+        if (msg.includes('fetch') || msg.includes('network') || msg.includes('404')) {
+            return 'WASM 文件加载失败：无法找到 phoenix-engine.wasm 文件。请确保文件存在于正确位置，或检查网络连接。';
+        }
+        
+        if (msg.includes('webgl') || msg.includes('context')) {
+            return 'WebGL 初始化失败：您的浏览器或显卡驱动可能不支持 WebGL 2.0。请更新显卡驱动或尝试其他浏览器。';
+        }
+        
+        if (msg.includes('memory') || msg.includes('heap')) {
+            return '内存不足：WASM 模块需要更多内存。请关闭其他标签页或重启浏览器。';
+        }
+        
+        if (msg.includes('instantiate') || msg.includes('compile')) {
+            return 'WASM 编译失败：WASM 文件可能已损坏或不兼容。请刷新页面重试或清除浏览器缓存。';
+        }
+        
+        return `初始化失败：${error.message}。请刷新页面重试，如果问题持续，请检查浏览器控制台获取详细信息。`;
+    }
+
     cacheUIElements() {
-        this.ui.loadingOverlay = document.getElementById('loading-overlay');
-        this.ui.loadingProgress = document.getElementById('loading-progress');
-        this.ui.loadingStatus = document.getElementById('loading-status');
-        this.ui.errorOverlay = document.getElementById('error-overlay');
-        this.ui.errorMessage = document.getElementById('error-message');
-        this.ui.fpsValue = document.getElementById('fps-value');
-        this.ui.frameTimeValue = document.getElementById('frame-time-value');
-        this.ui.drawCallsValue = document.getElementById('draw-calls-value');
-        this.ui.trianglesValue = document.getElementById('triangles-value');
-        this.ui.memoryValue = document.getElementById('memory-value');
-        this.ui.hudToggle = document.getElementById('hud-toggle');
-        this.ui.hudContent = document.getElementById('hud-content');
-        this.ui.controlToggle = document.getElementById('control-toggle');
-        this.ui.controlContent = document.getElementById('control-content');
+        this.ui = {
+            loadingOverlay: document.getElementById('loading-overlay'),
+            loadingProgress: document.getElementById('loading-progress'),
+            loadingStatus: document.getElementById('loading-status'),
+            errorOverlay: document.getElementById('error-overlay'),
+            errorMessage: document.getElementById('error-message'),
+            fpsValue: document.getElementById('fps-value'),
+            frameTimeValue: document.getElementById('frame-time-value'),
+            drawCallsValue: document.getElementById('draw-calls-value'),
+            trianglesValue: document.getElementById('triangles-value'),
+            memoryValue: document.getElementById('memory-value'),
+            hudToggle: document.getElementById('hud-toggle'),
+            hudContent: document.getElementById('hud-content'),
+            controlToggle: document.getElementById('control-toggle'),
+            controlContent: document.getElementById('control-content')
+        };
     }
 
     setupEventListeners() {
@@ -151,10 +206,7 @@ class PhoenixWasmLoader {
             { id: 'shadows', key: 'shadows' },
             { id: 'bloom', key: 'bloom' },
             { id: 'tone-mapping', key: 'toneMapping' },
-            { id: 'ssao', key: 'ssao' },
-            { id: 'particle-fire', key: 'particleFire' },
-            { id: 'particle-smoke', key: 'particleSmoke' },
-            { id: 'particle-sparks', key: 'particleSparks' }
+            { id: 'ssao', key: 'ssao' }
         ];
 
         toggles.forEach(toggle => {
@@ -170,6 +222,7 @@ class PhoenixWasmLoader {
         // Retry button
         document.getElementById('retry-btn')?.addEventListener('click', () => {
             this.ui.errorOverlay.classList.add('hidden');
+            this.isLoaded = false;
             this.init();
         });
 
@@ -182,6 +235,39 @@ class PhoenixWasmLoader {
 
         // Touch gesture handling
         this.setupTouchGestures();
+        
+        // Keyboard controls
+        this.setupKeyboardControls();
+    }
+    
+    setupKeyboardControls() {
+        document.addEventListener('keydown', (e) => {
+            if (!this.isLoaded || !this.instance) return;
+            
+            switch(e.key) {
+                case 'w': case 'W':
+                    this.instance.exports.demo_touch_rotate?.(0, -1);
+                    break;
+                case 's': case 'S':
+                    this.instance.exports.demo_touch_rotate?.(0, 1);
+                    break;
+                case 'a': case 'A':
+                    this.instance.exports.demo_touch_rotate?.(-1, 0);
+                    break;
+                case 'd': case 'D':
+                    this.instance.exports.demo_touch_rotate?.(1, 0);
+                    break;
+                case '=': case '+':
+                    this.instance.exports.demo_touch_zoom?.(-0.5);
+                    break;
+                case '-': case '_':
+                    this.instance.exports.demo_touch_zoom?.(0.5);
+                    break;
+                case 'r': case 'R':
+                    this.instance.exports.demo_double_tap?.();
+                    break;
+            }
+        });
     }
 
     setupTouchGestures() {
@@ -190,16 +276,16 @@ class PhoenixWasmLoader {
 
         let lastTouchDistance = 0;
         let lastTouchCenter = null;
-        let isDoubleTap = false;
+        let lastTouchX = 0;
+        let lastTouchY = 0;
 
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
             
             if (e.touches.length === 1) {
-                // Single touch - rotate
-                this.handleTouchStart(e.touches[0]);
+                lastTouchX = e.touches[0].clientX;
+                lastTouchY = e.touches[0].clientY;
             } else if (e.touches.length === 2) {
-                // Two fingers - pinch/pan
                 lastTouchDistance = this.getTouchDistance(e.touches);
                 lastTouchCenter = this.getTouchCenter(e.touches);
             }
@@ -209,7 +295,15 @@ class PhoenixWasmLoader {
             e.preventDefault();
 
             if (e.touches.length === 1) {
-                this.handleTouchMove(e.touches[0]);
+                const deltaX = e.touches[0].clientX - lastTouchX;
+                const deltaY = e.touches[0].clientY - lastTouchY;
+                
+                if (this.instance?.exports?.demo_touch_rotate) {
+                    this.instance.exports.demo_touch_rotate(deltaX * 0.5, deltaY * 0.5);
+                }
+                
+                lastTouchX = e.touches[0].clientX;
+                lastTouchY = e.touches[0].clientY;
             } else if (e.touches.length === 2) {
                 const currentDistance = this.getTouchDistance(e.touches);
                 const currentCenter = this.getTouchCenter(e.touches);
@@ -217,14 +311,18 @@ class PhoenixWasmLoader {
                 // Pinch zoom
                 if (lastTouchDistance > 0) {
                     const delta = currentDistance - lastTouchDistance;
-                    this.handleZoom(delta);
+                    if (this.instance?.exports?.demo_touch_zoom) {
+                        this.instance.exports.demo_touch_zoom(delta * 0.1);
+                    }
                 }
 
                 // Pan
                 if (lastTouchCenter) {
                     const deltaX = currentCenter.x - lastTouchCenter.x;
                     const deltaY = currentCenter.y - lastTouchCenter.y;
-                    this.handlePan(deltaX, deltaY);
+                    if (this.instance?.exports?.demo_touch_pan) {
+                        this.instance.exports.demo_touch_pan(deltaX * 0.5, deltaY * 0.5);
+                    }
                 }
 
                 lastTouchDistance = currentDistance;
@@ -247,7 +345,9 @@ class PhoenixWasmLoader {
             
             if (tapLength < 300 && tapLength > 0) {
                 e.preventDefault();
-                this.handleDoubleTap();
+                if (this.instance?.exports?.demo_double_tap) {
+                    this.instance.exports.demo_double_tap();
+                }
             }
             
             lastTapTime = currentTime;
@@ -267,56 +367,17 @@ class PhoenixWasmLoader {
         };
     }
 
-    handleTouchStart(touch) {
-        this.touchStartX = touch.clientX;
-        this.touchStartY = touch.clientY;
-    }
-
-    handleTouchMove(touch) {
-        if (this.touchStartX !== undefined) {
-            const deltaX = touch.clientX - this.touchStartX;
-            const deltaY = touch.clientY - this.touchStartY;
-            this.handleRotate(deltaX, deltaY);
-            this.touchStartX = touch.clientX;
-            this.touchStartY = touch.clientY;
-        }
-    }
-
-    handleRotate(deltaX, deltaY) {
-        if (this.instance?.exports?.on_touch_rotate) {
-            this.instance.exports.on_touch_rotate(deltaX * 0.5, deltaY * 0.5);
-        }
-    }
-
-    handleZoom(delta) {
-        if (this.instance?.exports?.on_touch_zoom) {
-            this.instance.exports.on_touch_zoom(delta * 0.1);
-        }
-    }
-
-    handlePan(deltaX, deltaY) {
-        if (this.instance?.exports?.on_touch_pan) {
-            this.instance.exports.on_touch_pan(deltaX * 0.5, deltaY * 0.5);
-        }
-    }
-
-    handleDoubleTap() {
-        if (this.instance?.exports?.on_double_tap) {
-            this.instance.exports.on_double_tap();
-        }
-    }
-
     async loadWasmModule() {
-        this.updateLoadingStatus('加载 WASM 模块...');
+        this.updateLoadingStatus('加载 Phoenix Engine WASM 模块...');
+        this.updateLoadingProgress(10);
+        
+        const wasmPath = 'phoenix-engine.wasm';
+        const jsPath = 'phoenix-engine.js';
         
         try {
-            // Check if WASM is supported
-            if (!WebAssembly) {
-                throw new Error('您的浏览器不支持 WebAssembly');
-            }
-
             // Try to load the WASM module
-            const wasmPath = 'demo-app.wasm';
+            this.updateLoadingStatus('正在下载 WASM 文件...');
+            this.updateLoadingProgress(30);
             
             const response = await fetch(wasmPath, {
                 credentials: 'same-origin',
@@ -326,78 +387,88 @@ class PhoenixWasmLoader {
             });
 
             if (!response.ok) {
-                // If WASM file doesn't exist, create a demo mode
-                console.log('WASM module not found, running in demo mode');
-                await this.createDemoMode();
-                return;
+                throw new Error(`WASM 文件加载失败 (HTTP ${response.status})`);
             }
 
-            const wasmBytes = await response.arrayBuffer();
+            const contentLength = response.headers.get('content-length');
+            const total = parseInt(contentLength, 10);
+            let loaded = 0;
+
+            // Create a streaming reader for progress
+            const reader = response.body.getReader();
+            const chunks = [];
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                chunks.push(value);
+                loaded += value.length;
+                
+                if (total > 0) {
+                    const progress = 30 + (loaded / total) * 40;
+                    this.updateLoadingProgress(progress);
+                    this.updateLoadingStatus(`下载中：${Math.round(loaded / 1024)}KB / ${Math.round(total / 1024)}KB`);
+                }
+            }
+            
+            // Concatenate chunks
+            const wasmBytes = new Uint8Array(loaded);
+            let position = 0;
+            for (const chunk of chunks) {
+                wasmBytes.set(chunk, position);
+                position += chunk.length;
+            }
+            
+            this.updateLoadingStatus('编译 WASM 模块...');
+            this.updateLoadingProgress(80);
             
             // Compile and instantiate
-            const { instance, module } = await WebAssembly.instantiate(wasmBytes, {
+            const wasmModule = await WebAssembly.compile(wasmBytes);
+            
+            this.updateLoadingStatus('初始化渲染引擎...');
+            this.updateLoadingProgress(90);
+            
+            // Get imports
+            const imports = {
                 env: {
                     memory: new WebAssembly.Memory({ initial: 256, maximum: 512 }),
                     table: new WebAssembly.Table({ initial: 0, element: 'anyfunc' }),
                     
-                    // Import functions
+                    // Emscripten imports
                     _emscripten_get_now: () => performance.now(),
                     
                     // Console logging
                     _console_log: (ptr, len) => {
                         const msg = this.readWasmString(ptr, len);
-                        console.log('[WASM]', msg);
+                        console.log('[Phoenix WASM]', msg);
                     },
                     _console_error: (ptr, len) => {
                         const msg = this.readWasmString(ptr, len);
-                        console.error('[WASM]', msg);
+                        console.error('[Phoenix WASM]', msg);
                     },
                     
-                    // Performance callbacks
-                    _update_fps: (fps) => { this.fps = fps; },
-                    _update_draw_calls: (count) => { this.drawCalls = count; },
-                    _update_triangles: (count) => { this.triangleCount = count; },
-                    _update_memory: (mb) => { this.memoryUsage = mb; },
+                    // Time
+                    _clock_gettime: () => 0,
                     
-                    // File loading
-                    _load_file: (ptr, len) => {
-                        const filename = this.readWasmString(ptr, len);
-                        return this.loadAssetFile(filename);
-                    }
-                },
-                wasi_snapshot_preview1: {
-                    proc_exit: (code) => {
-                        console.log('WASI exit:', code);
+                    // Abort
+                    _abort: () => {
+                        console.error('WASM abort called');
                     }
                 }
-            });
-
+            };
+            
+            const instance = await WebAssembly.instantiate(wasmModule, imports);
             this.instance = instance;
-            this.module = module;
-            this.loadingProgress = 100;
+            this.module = wasmModule;
+            
             this.updateLoadingProgress(100);
+            console.log('[PhoenixWasmLoader] WASM module loaded successfully');
             
         } catch (error) {
-            console.warn('WASM load failed, using fallback:', error);
-            await this.createDemoMode();
+            console.error('[PhoenixWasmLoader] WASM load failed:', error);
+            throw error;
         }
-    }
-
-    async createDemoMode() {
-        // Create a pure JavaScript/WebGL demo when WASM is not available
-        this.updateLoadingStatus('初始化 WebGL 渲染...');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Simulate loading progress
-        for (let i = 0; i <= 100; i += 10) {
-            this.updateLoadingProgress(i);
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        
-        this.isLoaded = true;
-        
-        // Start demo simulation
-        this.startDemoSimulation();
     }
 
     readWasmString(ptr, len) {
@@ -412,49 +483,31 @@ class PhoenixWasmLoader {
         return str;
     }
 
-    async loadAssetFile(filename) {
-        try {
-            const response = await fetch(`assets/${filename}`);
-            if (!response.ok) return 0;
-            const buffer = await response.arrayBuffer();
-            // In real implementation, would copy to WASM memory
-            return buffer.byteLength;
-        } catch {
-            return 0;
-        }
-    }
-
     async initializeGL() {
         this.canvas = document.getElementById('glcanvas');
-        if (!this.canvas) throw new Error('Canvas not found');
+        if (!this.canvas) {
+            throw new Error('Canvas 元素未找到');
+        }
 
         // Handle high DPI displays
         const dpr = window.devicePixelRatio || 1;
         const rect = this.canvas.getBoundingClientRect();
         
-        this.canvas.width = rect.width * dpr;
-        this.canvas.height = rect.height * dpr;
+        this.canvas.width = Math.floor(rect.width * dpr);
+        this.canvas.height = Math.floor(rect.height * dpr);
         
-        this.gl = this.canvas.getContext('webgl2', {
-            alpha: false,
-            antialias: true,
-            powerPreference: 'high-performance',
-            preserveDrawingBuffer: false
-        }) || this.canvas.getContext('webgl', {
-            alpha: false,
-            antialias: true
-        });
-
-        if (!this.gl) {
-            throw new Error('WebGL not supported');
-        }
-
-        // Initialize WASM with GL context
-        if (this.instance?.exports?.init_gl) {
-            this.instance.exports.init_gl(
-                this.canvas.width,
-                this.canvas.height
-            );
+        // Initialize WASM demo
+        if (this.instance?.exports?.demo_init) {
+            const result = this.instance.exports.demo_init(this.canvas.width, this.canvas.height);
+            
+            if (result !== 0) {
+                let errorMsg = `初始化失败 (错误码：${result})`;
+                if (result === -1) errorMsg = '引擎已初始化';
+                if (result === -2) errorMsg = '渲染后端初始化失败';
+                throw new Error(errorMsg);
+            }
+        } else {
+            throw new Error('WASM 模块缺少 demo_init 导出函数');
         }
 
         // Handle resize
@@ -465,15 +518,11 @@ class PhoenixWasmLoader {
         const dpr = window.devicePixelRatio || 1;
         const rect = this.canvas.getBoundingClientRect();
         
-        this.canvas.width = rect.width * dpr;
-        this.canvas.height = rect.height * dpr;
+        this.canvas.width = Math.floor(rect.width * dpr);
+        this.canvas.height = Math.floor(rect.height * dpr);
         
-        if (this.gl) {
-            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-        }
-        
-        if (this.instance?.exports?.on_resize) {
-            this.instance.exports.on_resize(this.canvas.width, this.canvas.height);
+        if (this.instance?.exports?.demo_resize) {
+            this.instance.exports.demo_resize(this.canvas.width, this.canvas.height);
         }
     }
 
@@ -483,6 +532,11 @@ class PhoenixWasmLoader {
         let fpsUpdateTime = lastTime;
 
         const render = (currentTime) => {
+            if (!this.isLoaded) {
+                requestAnimationFrame(render);
+                return;
+            }
+            
             const deltaTime = (currentTime - lastTime) / 1000;
             lastTime = currentTime;
 
@@ -498,23 +552,14 @@ class PhoenixWasmLoader {
                 this.updatePerformanceHUD();
             }
 
-            // Record frame time for graph
-            this.frameHistory.push(this.frameTime);
-            if (this.frameHistory.length > 60) {
-                this.frameHistory.shift();
-            }
-
             // Update WASM
-            if (this.instance?.exports?.update) {
-                this.instance.exports.update(deltaTime);
+            if (this.instance?.exports?.demo_update) {
+                this.instance.exports.demo_update(deltaTime);
             }
 
             // Render
-            if (this.instance?.exports?.render) {
-                this.instance.exports.render();
-            } else {
-                // Demo mode rendering
-                this.renderDemoFrame(currentTime);
+            if (this.instance?.exports?.demo_render) {
+                this.instance.exports.demo_render();
             }
 
             requestAnimationFrame(render);
@@ -523,56 +568,43 @@ class PhoenixWasmLoader {
         requestAnimationFrame(render);
     }
 
-    startDemoSimulation() {
-        // Simulate performance metrics for demo mode
-        setInterval(() => {
-            this.fps = Math.floor(55 + Math.random() * 10);
-            this.frameTime = 1000 / this.fps;
-            this.drawCalls = Math.floor(150 + Math.random() * 50);
-            this.triangleCount = Math.floor(45 + Math.random() * 10);
-            this.memoryUsage = Math.floor(120 + Math.random() * 30);
-            this.updatePerformanceHUD();
-        }, 1000);
-    }
-
-    renderDemoFrame(time) {
-        if (!this.gl) return;
-
-        const gl = this.gl;
-        const width = this.canvas.width;
-        const height = this.canvas.height;
-
-        // Clear with gradient-like color
-        const r = 0.1 + 0.05 * Math.sin(time * 0.001);
-        const g = 0.1 + 0.05 * Math.sin(time * 0.0013);
-        const b = 0.18 + 0.05 * Math.sin(time * 0.0007);
-        gl.clearColor(r, g, b, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        // Enable depth test
-        gl.enable(gl.DEPTH_TEST);
-        gl.enable(gl.CULL_FACE);
-    }
-
     updateLoadingProgress(progress) {
-        this.loadingProgress = Math.min(100, Math.max(0, progress));
-        this.ui.loadingProgress.style.width = `${this.loadingProgress}%`;
+        const clamped = Math.min(100, Math.max(0, progress));
+        if (this.ui.loadingProgress) {
+            this.ui.loadingProgress.style.width = `${clamped}%`;
+        }
     }
 
     updateLoadingStatus(status) {
-        this.ui.loadingStatus.textContent = status;
+        if (this.ui.loadingStatus) {
+            this.ui.loadingStatus.textContent = status;
+        }
     }
 
     hideLoading() {
-        this.ui.loadingOverlay.classList.add('hidden');
-        setTimeout(() => {
-            this.ui.loadingOverlay.style.display = 'none';
-        }, 500);
+        if (this.ui.loadingOverlay) {
+            this.ui.loadingOverlay.classList.add('hidden');
+            setTimeout(() => {
+                this.ui.loadingOverlay.style.display = 'none';
+            }, 500);
+        }
     }
 
     showError(message) {
-        this.ui.errorMessage.textContent = message;
-        this.ui.errorOverlay.classList.remove('hidden');
+        console.error('[PhoenixWasmLoader] Error:', message);
+        
+        if (this.ui.errorMessage) {
+            this.ui.errorMessage.textContent = message;
+        }
+        if (this.ui.errorOverlay) {
+            this.ui.errorOverlay.classList.remove('hidden');
+        }
+        
+        // Also show in loading status
+        if (this.ui.loadingStatus) {
+            this.ui.loadingStatus.textContent = '❌ ' + message;
+            this.ui.loadingStatus.style.color = '#ef4444';
+        }
     }
 
     updatePerformanceHUD() {
@@ -593,100 +625,48 @@ class PhoenixWasmLoader {
         if (this.ui.memoryValue) {
             this.ui.memoryValue.textContent = this.memoryUsage.toFixed(0);
         }
-
-        // Update frame time graph
-        this.updateFrameTimeGraph();
     }
 
-    updateFrameTimeGraph() {
-        const container = document.getElementById('frame-time-graph');
-        if (!container || this.frameHistory.length < 2) return;
-
-        // Clear previous canvas
-        container.innerHTML = '';
-        
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-        
-        canvas.width = width * (window.devicePixelRatio || 1);
-        canvas.height = height * (window.devicePixelRatio || 1);
-        ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-        
-        container.appendChild(canvas);
-
-        // Draw graph
-        const maxTime = 33; // 30fps threshold
-        const barWidth = width / 60;
-        
-        this.frameHistory.forEach((time, i) => {
-            const barHeight = (time / maxTime) * height;
-            const x = i * barWidth;
-            const y = height - barHeight;
-            
-            // Color based on frame time
-            if (time < 16.67) {
-                ctx.fillStyle = '#4ade80'; // Green - good
-            } else if (time < 33) {
-                ctx.fillStyle = '#fbbf24'; // Yellow - okay
-            } else {
-                ctx.fillStyle = '#ef4444'; // Red - bad
-            }
-            
-            ctx.fillRect(x, y, barWidth - 1, barHeight);
-        });
-
-        // Draw 30fps line
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.setLineDash([2, 2]);
-        ctx.beginPath();
-        const threshold30 = height - (33 / maxTime) * height;
-        ctx.moveTo(0, threshold30);
-        ctx.lineTo(width, threshold30);
-        ctx.stroke();
-    }
-
-    // Control update methods (would call into WASM in real implementation)
+    // Control update methods
     updateCameraMode(mode) {
-        console.log('Camera mode:', mode);
-        if (this.instance?.exports?.set_camera_mode) {
+        console.log('[PhoenixWasmLoader] Camera mode:', mode);
+        if (this.instance?.exports?.demo_set_camera_mode) {
             const modes = { orbit: 0, fps: 1, third: 2 };
-            this.instance.exports.set_camera_mode(modes[mode] || 0);
+            this.instance.exports.demo_set_camera_mode(modes[mode] || 0);
         }
     }
 
     updateMaterialParam(param, value) {
-        console.log('Material param:', param, value);
-        if (this.instance?.exports?.set_material_param) {
+        console.log('[PhoenixWasmLoader] Material param:', param, value);
+        if (this.instance?.exports?.demo_set_material_param) {
             const params = { metallic: 0, roughness: 1, clearcoat: 2 };
-            this.instance.exports.set_material_param(params[param], value);
+            this.instance.exports.demo_set_material_param(params[param], value);
         }
     }
 
     updateEffect(effect, enabled) {
-        console.log('Effect:', effect, enabled);
-        if (this.instance?.exports?.set_effect) {
+        console.log('[PhoenixWasmLoader] Effect:', effect, enabled);
+        if (this.instance?.exports?.demo_set_effect) {
             const effects = {
                 directionalLight: 0, pointLight: 1, spotLight: 2, shadows: 3,
-                bloom: 4, toneMapping: 5, ssao: 6,
-                particleFire: 10, particleSmoke: 11, particleSparks: 12
+                bloom: 4, toneMapping: 5, ssao: 6
             };
-            this.instance.exports.set_effect(effects[effect], enabled ? 1 : 0);
+            this.instance.exports.demo_set_effect(effects[effect], enabled ? 1 : 0);
         }
     }
 
     updateAnimation(anim) {
-        console.log('Animation:', anim);
-        if (this.instance?.exports?.set_animation) {
+        console.log('[PhoenixWasmLoader] Animation:', anim);
+        if (this.instance?.exports?.demo_set_animation) {
             const anims = { idle: 0, walk: 1, run: 2, jump: 3 };
-            this.instance.exports.set_animation(anims[anim] || 0);
+            this.instance.exports.demo_set_animation(anims[anim] || 0);
         }
     }
 }
 
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[PhoenixWasmLoader] DOM ready, initializing...');
     const loader = new PhoenixWasmLoader();
     loader.init();
     
@@ -697,8 +677,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // Service Worker registration for offline support
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(() => {
-            console.log('Service Worker registration skipped');
-        });
+        navigator.serviceWorker.register('sw.js')
+            .then(reg => console.log('[SW] Registered:', reg.scope))
+            .catch(err => console.log('[SW] Registration failed:', err));
     });
 }

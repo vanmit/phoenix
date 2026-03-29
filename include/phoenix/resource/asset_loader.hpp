@@ -263,6 +263,7 @@ public:
 private:
     Config m_config;
     
+    std::unique_ptr<Texture> loadByType(const std::string& path, AssetType type);
     std::unique_ptr<Texture> loadPNG(const std::string& path);
     std::unique_ptr<Texture> loadJPEG(const std::string& path);
     std::unique_ptr<Texture> loadKTX2(const std::string& path);

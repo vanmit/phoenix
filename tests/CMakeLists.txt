@@ -65,6 +65,26 @@ target_link_libraries(test_security PRIVATE GTest::gtest GTest::gtest_main)
 # If Phoenix Engine has a security library, link it here:
 # target_link_libraries(test_security PRIVATE phoenix_security)
 
+# Resource loader tests
+add_executable(test_resource_loaders resource/test_resource_loaders.cpp)
+target_link_libraries(test_resource_loaders PRIVATE GTest::gtest GTest::gtest_main)
+target_include_directories(test_resource_loaders PRIVATE 
+    ${PHOENIX_ENGINE_DIR}/include
+    ${PHOENIX_ENGINE_DIR}/build/_deps/tinygltf-src
+)
+
+# glTF loader specific tests
+add_executable(test_gltf_loader resource/test_gltf_loader.cpp)
+target_link_libraries(test_gltf_loader PRIVATE GTest::gtest GTest::gtest_main)
+target_include_directories(test_gltf_loader PRIVATE 
+    ${PHOENIX_ENGINE_DIR}/include
+    ${PHOENIX_ENGINE_DIR}/build/_deps/tinygltf-src
+)
+# Link against the GLTFLoader implementation
+target_sources(test_gltf_loader PRIVATE 
+    ${PHOENIX_ENGINE_DIR}/src/resource/GLTFLoader.cpp
+)
+
 # ============================================================================
 # Test Registration with CTest
 # ============================================================================
@@ -86,6 +106,18 @@ gtest_discover_tests(test_math
 gtest_discover_tests(test_security
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     TEST_PREFIX "[SECURITY] "
+    DISCOVERY_TIMEOUT 30
+)
+
+gtest_discover_tests(test_resource_loaders
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TEST_PREFIX "[RESOURCE] "
+    DISCOVERY_TIMEOUT 30
+)
+
+gtest_discover_tests(test_gltf_loader
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TEST_PREFIX "[GLTF] "
     DISCOVERY_TIMEOUT 30
 )
 

@@ -332,20 +332,20 @@ bool DeferredRenderer::initialize(RenderDevice& device, ShaderCompiler& compiler
         
         // Albedo
         desc.format = config.gbufferFormat.albedo;
-        // albedoTexture_.create(device, desc);
+        albedoTexture_.create(device, desc);
         
         // Normal
         desc.format = config.gbufferFormat.normal;
-        // normalTexture_.create(device, desc);
+        normalTexture_.create(device, desc);
         
         // Material
         desc.format = config.gbufferFormat.material;
-        // materialTexture_.create(device, desc);
+        materialTexture_.create(device, desc);
         
         // Depth
         desc.format = config.gbufferFormat.depth;
         desc.depthStencil = true;
-        // depthTexture_.create(device, desc);
+        depthTexture_.create(device, desc);
     }
     
     // 创建 G-Buffer 帧缓冲
@@ -353,9 +353,9 @@ bool DeferredRenderer::initialize(RenderDevice& device, ShaderCompiler& compiler
         FrameBufferDesc desc;
         desc.width = config.width;
         desc.height = config.height;
-        // desc.colorAttachments = {albedoTexture_, normalTexture_, materialTexture_};
-        // desc.depthAttachment = depthTexture_;
-        // gBufferFrameBuffer_.create(device, desc);
+        desc.colorAttachments = {albedoTexture_, normalTexture_, materialTexture_};
+        desc.depthAttachment = depthTexture_;
+        gBufferFrameBuffer_.create(device, desc);
     }
     
     // 创建输出纹理
@@ -366,13 +366,13 @@ bool DeferredRenderer::initialize(RenderDevice& device, ShaderCompiler& compiler
         desc.height = config.height;
         desc.format = TextureFormat::RGBA8;
         desc.renderTarget = true;
-        // outputTexture_.create(device, desc);
+        outputTexture_.create(device, desc);
         
         FrameBufferDesc fbDesc;
         fbDesc.width = config.width;
         fbDesc.height = config.height;
-        // fbDesc.colorAttachments = {outputTexture_};
-        // outputFrameBuffer_.create(device, fbDesc);
+        fbDesc.colorAttachments = {outputTexture_};
+        outputFrameBuffer_.create(device, fbDesc);
     }
     
     // 创建着色器程序
@@ -393,6 +393,14 @@ bool DeferredRenderer::initialize(RenderDevice& device, ShaderCompiler& compiler
     std::memset(invViewMatrix_, 0, sizeof(invViewMatrix_));
     std::memset(invProjectionMatrix_, 0, sizeof(invProjectionMatrix_));
     
+    // 初始化后处理堆栈
+    if (!postProcessStack_.initialize(device, compiler)) {
+        return false;
+    }
+    
+    // 设置后处理分辨率
+    postProcessStack_.resize(config.width, config.height);
+    
     return true;
 }
 
@@ -410,6 +418,8 @@ void DeferredRenderer::shutdown() {
     lightingUniforms_.reset();
     lightDataBuffer_.reset();
     
+    postProcessStack_.shutdown();
+    
     lightManager_.clear();
     geometryDrawCalls_.clear();
     
@@ -423,26 +433,29 @@ void DeferredRenderer::resize(uint32_t width, uint32_t height) {
     
     // 重新创建 G-Buffer 和输出纹理
     // (实现略)
+    
+    // 调整后处理分辨率
+    postProcessStack_.resize(width, height);
 }
 
 void DeferredRenderer::beginGeometryPass(RenderDevice& device) {
     // 绑定 G-Buffer 帧缓冲
-    // device.setFrameBuffer(gBufferFrameBuffer_);
+    device.setFrameBuffer(gBufferFrameBuffer_);
     
     // 清除
-    // device.clear(0, ClearFlags::All, Color(0,0,0,0), 1.0f);
+    device.clear(0, ClearFlags::All, Color(0,0,0,0), 1.0f);
     
     stats_.geometryDrawCalls = 0;
 }
 
 void DeferredRenderer::endGeometryPass(RenderDevice& device) {
     // 解绑帧缓冲
-    // device.setFrameBuffer(FrameBufferHandle());
+    device.setFrameBuffer(FrameBufferHandle());
 }
 
 void DeferredRenderer::beginLightingPass(RenderDevice& device) {
     // 绑定输出帧缓冲
-    // device.setFrameBuffer(outputFrameBuffer_);
+    device.setFrameBuffer(outputFrameBuffer_);
     
     // 构建光源数据
     buildLightData();
@@ -452,6 +465,7 @@ void DeferredRenderer::beginLightingPass(RenderDevice& device) {
 
 void DeferredRenderer::endLightingPass(RenderDevice& device) {
     // 解绑帧缓冲
+    device.setFrameBuffer(FrameBufferHandle());
 }
 
 void DeferredRenderer::addGeometryDrawCall(const DrawCall& drawCall) {
@@ -546,6 +560,15 @@ void HybridRenderer::shutdown() {
     deferredRenderer_.shutdown();
     forwardRenderer_.shutdown();
     device_ = nullptr;
+}
+
+void DeferredRenderer::applyPostProcess(RenderDevice& device, TextureHandle input,
+                                         TextureHandle output, uint32_t viewId) {
+    // 设置 G-Buffer 纹理 (用于 SSAO 等效果)
+    postProcessStack_.setGBufferTextures(normalTexture_, depthTexture_);
+    
+    // 渲染后处理效果链
+    postProcessStack_.render(device, input, output, viewId);
 }
 
 void HybridRenderer::renderOpaque(RenderDevice& device, 

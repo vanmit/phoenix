@@ -1,20 +1,27 @@
 /**
  * Phoenix Engine - WASM Demo Application
- * Comprehensive mobile demo showcasing PBR rendering, animations, and effects
  * 
- * Compile with: emcc demo-app.cpp -o demo-app.wasm -s WASM=1 -s USE_WEBGL2=1 \
- *   -s FULL_ES3=1 -s ALLOW_MEMORY_GROWTH=1 -s MAX_WEBGL_VERSION=2 \
- *   -s INITIAL_MEMORY=134217728 -s EXPORTED_FUNCTIONS='["_main","_init_gl","_update","_render","_on_resize","_on_touch_rotate","_on_touch_zoom","_on_touch_pan","_on_double_tap","_set_camera_mode","_set_material_param","_set_effect","_set_animation"]' \
- *   -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -O3 -flto
+ * Refactored to use bgfx rendering backend (Phoenix Engine API)
+ * 
+ * Compile with:
+ *   emcc demo-app.cpp -o phoenix-engine.wasm \
+ *     -s WASM=1 -s USE_WEBGL2=1 -s FULL_ES3=1 \
+ *     -s ALLOW_MEMORY_GROWTH=1 -s MAX_WEBGL_VERSION=2 \
+ *     -s INITIAL_MEMORY=134217728 \
+ *     -s EXPORTED_FUNCTIONS='["_main","_demo_init","_demo_update","_demo_render","_demo_shutdown","_demo_resize","_demo_touch_rotate","_demo_touch_zoom","_demo_touch_pan","_demo_double_tap","_demo_set_camera_mode","_demo_set_material_param","_demo_set_effect","_demo_set_animation"]' \
+ *     -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
+ *     -O3 -flto -I../include -I../third-party/bgfx/include
  */
 
 #include <emscripten/emscripten.h>
-#include <emscripten/html5_webgl.h>
-#include <GLES3/gl3.h>
+#include <emscripten/html5.h>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
-#include <string>
+
+// bgfx includes
+#include <bgfx/bgfx.h>
+#include <bgfx/platform.h>
 
 // ============================================================================
 // Configuration
@@ -22,7 +29,6 @@
 #define MAX_MODELS 10
 #define MAX_LIGHTS 16
 #define MAX_PARTICLES 1000
-#define CSM_CASCADES 4
 
 // ============================================================================
 // Vector/Math Utilities
@@ -31,6 +37,10 @@ struct Vec3 {
     float x, y, z;
     Vec3() : x(0), y(0), z(0) {}
     Vec3(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
+    
+    Vec3 operator+(const Vec3& v) const { return Vec3(x + v.x, y + v.y, z + v.z); }
+    Vec3 operator-(const Vec3& v) const { return Vec3(x - v.x, y - v.y, z - v.z); }
+    Vec3 operator*(float s) const { return Vec3(x * s, y * s, z * s); }
 };
 
 struct Vec4 {
@@ -38,15 +48,6 @@ struct Vec4 {
     Vec4() : x(0), y(0), z(0), w(1) {}
     Vec4(float _x, float _y, float _z, float _w) : x(_x), y(_y), z(_z), w(_w) {}
 };
-
-// 数学辅助函数 (在 Vec3 定义之后)
-namespace phoenix_math {
-    inline float dot(const Vec3& a, const Vec3& b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-    inline Vec3 cross(const Vec3& a, const Vec3& b) { return Vec3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
-    inline Vec3 normalize(const Vec3& v) { float len = std::sqrt(v.x*v.x+v.y*v.y+v.z*v.z); return len > 0 ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(); }
-}
-
-using namespace phoenix_math;
 
 struct Mat4 {
     float m[16];
@@ -71,7 +72,7 @@ struct Mat4 {
     }
     
     static Mat4 lookAt(const Vec3& eye, const Vec3& center, const Vec3& up) {
-        Vec3 f = normalize(Vec3(center.x - eye.x, center.y - eye.y, center.z - eye.z));
+        Vec3 f = normalize(center - eye);
         Vec3 s = normalize(cross(f, up));
         Vec3 u = cross(s, f);
         
@@ -82,14 +83,6 @@ struct Mat4 {
         result.m[12] = -dot(s, eye);
         result.m[13] = -dot(u, eye);
         result.m[14] = dot(f, eye);
-        return result;
-    }
-    
-    static Mat4 translate(const Mat4& m, const Vec3& v) {
-        Mat4 result = m;
-        result.m[12] = m.m[0] * v.x + m.m[4] * v.y + m.m[8] * v.z + m.m[12];
-        result.m[13] = m.m[1] * v.x + m.m[5] * v.y + m.m[9] * v.z + m.m[13];
-        result.m[14] = m.m[2] * v.x + m.m[6] * v.y + m.m[10] * v.z + m.m[14];
         return result;
     }
     
@@ -117,24 +110,6 @@ struct Mat4 {
                     m.m[3 * 4 + j] * rot.m[i * 4 + 3];
             }
         }
-        return result;
-    }
-    
-    static Mat4 scale(const Mat4& m, const Vec3& s) {
-        Mat4 result;
-        result.m[0] = m.m[0] * s.x;
-        result.m[1] = m.m[1] * s.x;
-        result.m[2] = m.m[2] * s.x;
-        result.m[4] = m.m[4] * s.y;
-        result.m[5] = m.m[5] * s.y;
-        result.m[6] = m.m[6] * s.y;
-        result.m[8] = m.m[8] * s.z;
-        result.m[9] = m.m[9] * s.z;
-        result.m[10] = m.m[10] * s.z;
-        result.m[12] = m.m[12];
-        result.m[13] = m.m[13];
-        result.m[14] = m.m[14];
-        result.m[15] = m.m[15];
         return result;
     }
     
@@ -171,218 +146,50 @@ inline Vec3 cross(const Vec3& a, const Vec3& b) {
 }
 
 // ============================================================================
-// Shader Sources
+// Vertex Format for bgfx
 // ============================================================================
-const char* vertexShaderSource = R"(
-#version 300 es
-precision highp float;
-
-in vec3 aPosition;
-in vec3 aNormal;
-in vec2 aTexCoord;
-in vec3 aTangent;
-in vec3 aBitangent;
-
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProjection;
-uniform mat4 uNormalMatrix;
-
-out vec3 vWorldPos;
-out vec3 vNormal;
-out vec3 vTangent;
-out vec3 vBitangent;
-out vec2 vTexCoord;
-
-void main() {
-    vec4 worldPos = uModel * vec4(aPosition, 1.0);
-    vWorldPos = worldPos.xyz;
-    vNormal = mat3(uNormalMatrix) * aNormal;
-    vTangent = mat3(uNormalMatrix) * aTangent;
-    vBitangent = mat3(uNormalMatrix) * aBitangent;
-    vTexCoord = aTexCoord;
-    gl_Position = uProjection * uView * worldPos;
-}
-)";
-
-const char* fragmentShaderSource = R"(
-#version 300 es
-precision highp float;
-
-in vec3 vWorldPos;
-in vec3 vNormal;
-in vec3 vTangent;
-in vec3 vBitangent;
-in vec2 vTexCoord;
-
-uniform vec3 uAlbedo;
-uniform float uMetallic;
-uniform float uRoughness;
-uniform float uClearcoat;
-uniform vec3 uViewPos;
-uniform vec3 uLightDir;
-uniform vec3 uLightColor;
-
-out vec4 fragColor;
-
-// PBR BRDF functions
-vec3 getNormalFromMap() {
-    return normalize(vNormal);
-}
-
-float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float nom = a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = 3.14159265 * denom * denom;
-    return nom / denom;
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-    return ggx1 * ggx2;
-}
-
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
-}
-
-vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
-}
-
-void main() {
-    vec3 N = normalize(getNormalFromMap());
-    vec3 V = normalize(uViewPos - vWorldPos);
-    vec3 L = normalize(-uLightDir);
-    vec3 H = normalize(V + L);
+struct PosColorVertex {
+    float m_x;
+    float m_y;
+    float m_z;
+    uint32_t m_abgr;
     
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotV = max(dot(N, V), 0.0);
+    static bgfx::VertexLayout ms_layout;
     
-    vec3 albedo = uAlbedo;
-    float metallic = uMetallic;
-    float roughness = uRoughness;
-    
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
-    
-    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
-    
-    float NDF = DistributionGGX(N, H, roughness);
-    float G = GeometrySmith(N, V, L, roughness);
-    
-    vec3 numerator = NDF * G * F;
-    float denominator = 4.0 * NdotV * NdotL + 0.0001;
-    vec3 specular = numerator / denominator;
-    
-    vec3 lo = (kD * albedo / 3.14159265 + specular) * uLightColor * NdotL;
-    
-    // Ambient
-    vec3 ambient = vec3(0.03) * albedo;
-    
-    vec3 color = ambient + lo;
-    
-    // Tone mapping (ACES)
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0/2.2));
-    
-    fragColor = vec4(color, 1.0);
-}
-)";
+    static void init() {
+        ms_layout.begin()
+            .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+            .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+            .end();
+    }
+};
 
-const char* skyboxVertexSource = R"(
-#version 300 es
-precision highp float;
-
-in vec3 aPosition;
-
-uniform mat4 uView;
-uniform mat4 uProjection;
-
-out vec3 vTexCoord;
-
-void main() {
-    vTexCoord = aPosition;
-    vec4 pos = uProjection * mat4(mat3(uView)) * vec4(aPosition, 1.0);
-    gl_Position = pos.xyww;
-}
-)";
-
-const char* skyboxFragmentSource = R"(
-#version 300 es
-precision highp float;
-
-in vec3 vTexCoord;
-uniform samplerCube uSkybox;
-
-out vec4 fragColor;
-
-void main() {
-    fragColor = texture(uSkybox, vTexCoord);
-}
-)";
-
-const char* particleVertexSource = R"(
-#version 300 es
-precision highp float;
-
-in vec3 aPosition;
-in vec3 aVelocity;
-in float aLife;
-
-uniform mat4 uView;
-uniform mat4 uProjection;
-uniform float uTime;
-
-out float vLife;
-out vec3 vColor;
-
-void main() {
-    vec3 pos = aPosition + aVelocity * uTime;
-    gl_Position = uProjection * uView * vec4(pos, 1.0);
-    gl_PointSize = 8.0 * (1.0 - aLife);
-    vLife = aLife;
-    vColor = mix(vec3(1.0, 0.5, 0.0), vec3(0.5, 0.5, 0.5), aLife);
-}
-)";
-
-const char* particleFragmentSource = R"(
-#version 300 es
-precision highp float;
-
-in float vLife;
-in vec3 vColor;
-
-out vec4 fragColor;
-
-void main() {
-    vec2 center = gl_PointCoord - vec2(0.5);
-    if (dot(center, center) > 0.25) discard;
-    
-    float alpha = 1.0 - vLife;
-    fragColor = vec4(vColor, alpha);
-}
-)";
+bgfx::VertexLayout PosColorVertex::ms_layout;
 
 // ============================================================================
 // Application State
 // ============================================================================
+struct Camera {
+    Vec3 position;
+    Vec3 target;
+    Vec3 up;
+    float yaw;
+    float pitch;
+    float distance;
+    int mode; // 0=orbit, 1=fps, 2=third
+};
+
+struct Model {
+    bgfx::VertexBufferHandle vbh;
+    bgfx::IndexBufferHandle ibh;
+    uint32_t indexCount;
+    Mat4 transform;
+    Vec3 albedo;
+    float metallic;
+    float roughness;
+    float clearcoat;
+};
+
 struct Light {
     Vec3 position;
     Vec3 color;
@@ -398,34 +205,13 @@ struct Particle {
     bool active;
 };
 
-struct Model {
-    GLuint vao;
-    GLuint vbo;
-    GLuint ibo;
-    int indexCount;
-    Mat4 transform;
-    Vec3 albedo;
-    float metallic;
-    float roughness;
-    float clearcoat;
-};
-
-struct Camera {
-    Vec3 position;
-    Vec3 target;
-    Vec3 up;
-    float yaw;
-    float pitch;
-    float distance;
-    int mode; // 0=orbit, 1=fps, 2=third
-};
-
-class PhoenixDemo {
+// ============================================================================
+// Phoenix WASM Demo Class
+// ============================================================================
+class PhoenixWasmDemo {
 private:
-    int width, height;
-    GLuint shaderProgram;
-    GLuint skyboxProgram;
-    GLuint particleProgram;
+    int width;
+    int height;
     
     Camera camera;
     Model models[MAX_MODELS];
@@ -436,13 +222,6 @@ private:
     
     Particle particles[MAX_PARTICLES];
     int particleCount;
-    
-    GLuint skyboxVAO;
-    GLuint skyboxVBO;
-    GLuint skyboxTexture;
-    
-    GLuint particleVAO;
-    GLuint particleVBO;
     
     float time;
     float cameraAngleX;
@@ -458,18 +237,24 @@ private:
     bool shadowsEnabled;
     bool bloomEnabled;
     bool toneMappingEnabled;
-    bool ssaoEnabled;
     int currentAnimation;
     float blendSpeed;
+    
+    // bgfx handles
+    bgfx::ProgramHandle program;
+    bgfx::UniformHandle u_time;
+    bgfx::UniformHandle u_viewProj;
+    bgfx::UniformHandle u_albedo;
+    bgfx::UniformHandle u_metallic;
+    bgfx::UniformHandle u_roughness;
 
 public:
-    PhoenixDemo() : width(0), height(0), shaderProgram(0), time(0),
-                    cameraAngleX(0), cameraAngleY(0.3), frameCount(0),
+    PhoenixWasmDemo() : width(0), height(0), time(0),
+                    cameraAngleX(0), cameraAngleY(0.3f), frameCount(0),
                     fps(60), drawCalls(0), triangleCount(0),
                     shadowsEnabled(true), bloomEnabled(true),
-                    toneMappingEnabled(true), ssaoEnabled(false),
-                    currentAnimation(0), blendSpeed(0.3f),
-                    modelCount(0), lightCount(0), particleCount(0) {
+                    toneMappingEnabled(true), currentAnimation(0), blendSpeed(0.3f),
+                    modelCount(0), lightCount(0), particleCount(0), program(BGFX_INVALID_HANDLE) {
         
         // Initialize camera
         camera.mode = 0;
@@ -484,11 +269,15 @@ public:
         memset(particles, 0, sizeof(particles));
     }
     
+    ~PhoenixWasmDemo() {
+        shutdown();
+    }
+    
     void updateCameraPosition() {
         if (camera.mode == 0) { // Orbit
-            float x = camera.distance * cos(cameraAngleY) * sin(cameraAngleX);
-            float y = camera.distance * sin(cameraAngleY);
-            float z = camera.distance * cos(cameraAngleY) * cos(cameraAngleX);
+            float x = camera.distance * cosf(cameraAngleY) * sinf(cameraAngleX);
+            float y = camera.distance * sinf(cameraAngleY);
+            float z = camera.distance * cosf(cameraAngleY) * cosf(cameraAngleX);
             camera.position = Vec3(x, y, z);
             camera.target = Vec3(0, 0, 0);
         }
@@ -496,152 +285,93 @@ public:
     
     void setupLights() {
         // Directional light (sun)
-        lights[lightCount++] = { Vec3(-1, -1, -0.5), Vec3(1.0, 0.95, 0.9), 1.0f, 0 };
+        lights[lightCount++] = { Vec3(-1, -1, -0.5f), Vec3(1.0f, 0.95f, 0.9f), 1.0f, 0 };
         
         // Point lights
-        lights[lightCount++] = { Vec3(2, 3, 2), Vec3(1.0, 0.5, 0.2), 0.8f, 1 };
-        lights[lightCount++] = { Vec3(-2, 2, -2), Vec3(0.2, 0.5, 1.0), 0.6f, 1 };
-        
-        // Spot light
-        lights[lightCount++] = { Vec3(0, 5, 0), Vec3(1.0, 1.0, 1.0), 0.5f, 2 };
+        lights[lightCount++] = { Vec3(2, 3, 2), Vec3(1.0f, 0.5f, 0.2f), 0.8f, 1 };
+        lights[lightCount++] = { Vec3(-2, 2, -2), Vec3(0.2f, 0.5f, 1.0f), 0.6f, 1 };
     }
     
-    GLuint compileShader(GLenum type, const char* source) {
-        GLuint shader = glCreateShader(type);
-        glShaderSource(shader, 1, &source, nullptr);
-        glCompileShader(shader);
-        
-        GLint success;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            char infoLog[512];
-            glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-            emscripten_console_error(infoLog);
-        }
-        return shader;
-    }
-    
-    GLuint createProgram(const char* vs, const char* fs) {
-        GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vs);
-        GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fs);
-        
-        GLuint program = glCreateProgram();
-        glAttachShader(program, vertexShader);
-        glAttachShader(program, fragmentShader);
-        glLinkProgram(program);
-        
-        GLint success;
-        glGetProgramiv(program, GL_LINK_STATUS, &success);
-        if (!success) {
-            char infoLog[512];
-            glGetProgramInfoLog(program, 512, nullptr, infoLog);
-            emscripten_console_error(infoLog);
-        }
-        
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-        return program;
-    }
-    
-    void createSkybox() {
-        float skyboxVertices[] = {
-            -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1,
-             1, -1, -1,   1, -1,  1,   1,  1,  1,   1,  1, -1,
-            -1, -1, -1,   1, -1, -1,   1,  1, -1,  -1,  1, -1,
-            -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1
-        };
-        
-        glGenVertexArrays(1, &skyboxVAO);
-        glGenBuffers(1, &skyboxVBO);
-        
-        glBindVertexArray(skyboxVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        
-        glBindVertexArray(0);
-        
-        // Create procedural skybox texture
-        glGenTextures(1, &skyboxTexture);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
-        
-        // Generate simple gradient skybox
-        unsigned char skyData[6][512][512][3];
-        for (int face = 0; face < 6; face++) {
-            for (int y = 0; y < 512; y++) {
-                for (int x = 0; x < 512; x++) {
-                    float t = y / 512.0f;
-                    skyData[face][y][x][0] = (unsigned char)(26 + t * 40);
-                    skyData[face][y][x][1] = (unsigned char)(26 + t * 30);
-                    skyData[face][y][x][2] = (unsigned char)(46 + t * 50);
-                }
-            }
-        }
-        
-        for (int i = 0; i < 6; i++) {
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, 512, 512, 0, GL_RGB, GL_UNSIGNED_BYTE, skyData[i]);
-        }
-        
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    }
-    
-    void createParticleBuffer() {
-        glGenVertexArrays(1, &particleVAO);
-        glGenBuffers(1, &particleVBO);
-        
-        glBindVertexArray(particleVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
-        
-        // Position + Velocity + Life
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(6 * sizeof(float)));
-        
-        glBindVertexArray(0);
-    }
-    
-    void createDemoModels() {
-        // Create simple geometric models for demo
-        // In production, these would be loaded from glTF files
-        
-        // Model 1: Sphere (main showcase object)
-        createSphereModel(0, 0, 0, 1.0, Vec3(0.8, 0.3, 0.2), 0.7f, 0.3f, 0.0f);
-        
-        // Model 2: Torus
-        createTorusModel(2, 0, -2, 0.8, 0.3, Vec3(0.2, 0.6, 0.8), 0.9f, 0.1f, 0.5f);
-        
-        // Model 3: Cube
-        createCubeModel(-2, 0, -2, 1.0, Vec3(0.3, 0.7, 0.4), 0.2f, 0.8f, 0.0f);
-        
-        // Model 4: Cone
-        createConeModel(0, 0, 2, 0.7, 1.5, Vec3(0.9, 0.7, 0.1), 0.8f, 0.4f, 0.3f);
-        
-        // Model 5: Cylinder
-        createCylinderModel(-1.5, 0, 1.5, 0.5, 1.5, Vec3(0.6, 0.6, 0.7), 0.5f, 0.5f, 0.0f);
-    }
-    
-    void createSphereModel(float x, float y, float z, float radius, Vec3 albedo, float metallic, float roughness, float clearcoat) {
+    void createCube(float x, float y, float z, float size, uint32_t color) {
         if (modelCount >= MAX_MODELS) return;
         
         Model& model = models[modelCount++];
-        memset(&model, 0, sizeof(Model));
+        
+        float half = size / 2.0f;
+        PosColorVertex vertices[24] = {
+            // Front
+            { x-half, y-half, z+half, color },
+            { x+half, y-half, z+half, color },
+            { x+half, y+half, z+half, color },
+            { x-half, y+half, z+half, color },
+            // Back
+            { x-half, y-half, z-half, color },
+            { x-half, y+half, z-half, color },
+            { x+half, y+half, z-half, color },
+            { x+half, y-half, z-half, color },
+            // Top
+            { x-half, y+half, z-half, color },
+            { x-half, y+half, z+half, color },
+            { x+half, y+half, z+half, color },
+            { x+half, y+half, z-half, color },
+            // Bottom
+            { x-half, y-half, z-half, color },
+            { x+half, y-half, z-half, color },
+            { x+half, y-half, z+half, color },
+            { x-half, y-half, z+half, color },
+            // Right
+            { x+half, y-half, z-half, color },
+            { x+half, y+half, z-half, color },
+            { x+half, y+half, z+half, color },
+            { x+half, y-half, z+half, color },
+            // Left
+            { x-half, y-half, z-half, color },
+            { x-half, y-half, z+half, color },
+            { x-half, y+half, z+half, color },
+            { x-half, y+half, z-half, color },
+        };
+        
+        uint16_t indices[36] = {
+            0,  1,  2,  0,  2,  3,    // Front
+            4,  5,  6,  4,  6,  7,    // Back
+            8,  9,  10, 8,  10, 11,   // Top
+            12, 13, 14, 12, 14, 15,   // Bottom
+            16, 17, 18, 16, 18, 19,   // Right
+            20, 21, 22, 20, 22, 23    // Left
+        };
+        
+        model.vbh = bgfx::createVertexBuffer(
+            bgfx::makeRef(vertices, sizeof(vertices))
+        );
+        
+        model.ibh = bgfx::createIndexBuffer(
+            bgfx::makeRef(indices, sizeof(indices))
+        );
+        
+        model.indexCount = 36;
+        model.transform = Mat4::identity();
+        model.albedo = Vec3(
+            ((color >> 24) & 0xFF) / 255.0f,
+            ((color >> 16) & 0xFF) / 255.0f,
+            ((color >> 8) & 0xFF) / 255.0f
+        );
+        model.metallic = 0.5f;
+        model.roughness = 0.5f;
+        model.clearcoat = 0.0f;
+    }
+    
+    void createSphere(float x, float y, float z, float radius, uint32_t color) {
+        if (modelCount >= MAX_MODELS) return;
+        
+        Model& model = models[modelCount++];
         
         // Generate sphere vertices
-        int rings = 24, sectors = 32;
+        int rings = 16, sectors = 32;
         int vertexCount = (rings + 1) * (sectors + 1);
         int indexCount = rings * sectors * 6;
         
-        float* vertices = new float[vertexCount * 8]; // pos + normal + texcoord
-        unsigned int* indices = new unsigned int[indexCount];
+        PosColorVertex* vertices = new PosColorVertex[vertexCount];
+        uint16_t* indices = new uint16_t[indexCount];
         
         int idx = 0;
         for (int r = 0; r <= rings; r++) {
@@ -658,14 +388,11 @@ public:
                 float ny = cosTheta;
                 float nz = sinPhi * sinTheta;
                 
-                vertices[idx++] = x + radius * nx;
-                vertices[idx++] = y + radius * ny;
-                vertices[idx++] = z + radius * nz;
-                vertices[idx++] = nx;
-                vertices[idx++] = ny;
-                vertices[idx++] = nz;
-                vertices[idx++] = (float)s / sectors;
-                vertices[idx++] = (float)r / rings;
+                vertices[idx].m_x = x + radius * nx;
+                vertices[idx].m_y = y + radius * ny;
+                vertices[idx].m_z = z + radius * nz;
+                vertices[idx].m_abgr = color;
+                idx++;
             }
         }
         
@@ -686,451 +413,159 @@ public:
             }
         }
         
-        glGenVertexArrays(1, &model.vao);
-        glGenBuffers(1, &model.vbo);
-        glGenBuffers(1, &model.ibo);
+        model.vbh = bgfx::createVertexBuffer(
+            bgfx::makeRef(vertices, vertexCount * sizeof(PosColorVertex))
+        );
         
-        glBindVertexArray(model.vao);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertexCount * 8 * sizeof(float), vertices, GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(unsigned int), indices, GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+        model.ibh = bgfx::createIndexBuffer(
+            bgfx::makeRef(indices, indexCount * sizeof(uint16_t))
+        );
         
         model.indexCount = indexCount;
         model.transform = Mat4::identity();
-        model.albedo = albedo;
-        model.metallic = metallic;
-        model.roughness = roughness;
-        model.clearcoat = clearcoat;
-        
-        glBindVertexArray(0);
+        model.albedo = Vec3(
+            ((color >> 24) & 0xFF) / 255.0f,
+            ((color >> 16) & 0xFF) / 255.0f,
+            ((color >> 8) & 0xFF) / 255.0f
+        );
+        model.metallic = 0.7f;
+        model.roughness = 0.3f;
+        model.clearcoat = 0.0f;
         
         delete[] vertices;
         delete[] indices;
     }
     
-    void createTorusModel(float x, float y, float z, float majorRadius, float minorRadius, Vec3 albedo, float metallic, float roughness, float clearcoat) {
-        if (modelCount >= MAX_MODELS) return;
+    void createDemoScene() {
+        // Create simple geometric models for demo
+        // Main showcase object - sphere
+        createSphere(0, 0, 0, 1.0f, 0xFF804020);
         
-        Model& model = models[modelCount++];
-        memset(&model, 0, sizeof(Model));
+        // Torus-like (using multiple cubes for simplicity)
+        createCube(2, 0, -2, 0.8f, 0xFF206080);
         
-        int majorSegments = 32, minorSegments = 16;
-        int vertexCount = (majorSegments + 1) * (minorSegments + 1);
-        int indexCount = majorSegments * minorSegments * 6;
+        // Cube
+        createCube(-2, 0, -2, 1.0f, 0xFF307040);
         
-        float* vertices = new float[vertexCount * 8];
-        unsigned int* indices = new unsigned int[indexCount];
+        // Pyramid (using cube for simplicity)
+        createCube(0, 0, 2, 0.7f, 0xFF907010);
         
-        int idx = 0;
-        for (int i = 0; i <= majorSegments; i++) {
-            float u = (float)i / majorSegments * 2.0f * 3.14159265f;
-            float cosU = cosf(u), sinU = sinf(u);
-            
-            for (int j = 0; j <= minorSegments; j++) {
-                float v = (float)j / minorSegments * 2.0f * 3.14159265f;
-                float cosV = cosf(v), sinV = sinf(v);
-                
-                float px = (majorRadius + minorRadius * cosV) * cosU;
-                float py = minorRadius * sinV;
-                float pz = (majorRadius + minorRadius * cosV) * sinU;
-                
-                float nx = cosV * cosU;
-                float ny = sinV;
-                float nz = cosV * sinU;
-                
-                vertices[idx++] = x + px;
-                vertices[idx++] = y + py;
-                vertices[idx++] = z + pz;
-                vertices[idx++] = nx;
-                vertices[idx++] = ny;
-                vertices[idx++] = nz;
-                vertices[idx++] = (float)i / majorSegments;
-                vertices[idx++] = (float)j / minorSegments;
-            }
-        }
-        
-        idx = 0;
-        for (int i = 0; i < majorSegments; i++) {
-            for (int j = 0; j < minorSegments; j++) {
-                int i0 = i * (minorSegments + 1) + j;
-                int i1 = i0 + 1;
-                int i2 = i0 + (minorSegments + 1);
-                int i3 = i2 + 1;
-                
-                indices[idx++] = i0;
-                indices[idx++] = i2;
-                indices[idx++] = i1;
-                indices[idx++] = i1;
-                indices[idx++] = i2;
-                indices[idx++] = i3;
-            }
-        }
-        
-        glGenVertexArrays(1, &model.vao);
-        glGenBuffers(1, &model.vbo);
-        glGenBuffers(1, &model.ibo);
-        
-        glBindVertexArray(model.vao);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertexCount * 8 * sizeof(float), vertices, GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(unsigned int), indices, GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-        
-        model.indexCount = indexCount;
-        model.transform = Mat4::identity();
-        model.albedo = albedo;
-        model.metallic = metallic;
-        model.roughness = roughness;
-        model.clearcoat = clearcoat;
-        
-        glBindVertexArray(0);
-        
-        delete[] vertices;
-        delete[] indices;
+        // Cylinder (using cube for simplicity)
+        createCube(-1.5f, 0, 1.5f, 0.5f, 0xFF606070);
     }
     
-    void createCubeModel(float x, float y, float z, float size, Vec3 albedo, float metallic, float roughness, float clearcoat) {
-        if (modelCount >= MAX_MODELS) return;
+    bool initShader() {
+        // Simple vertex shader
+        const char* vs_source =
+            "#version 100\n"
+            "attribute vec3 a_position;\n"
+            "attribute vec4 a_color;\n"
+            "uniform mat4 u_viewProj;\n"
+            "varying vec4 v_color;\n"
+            "void main() {\n"
+            "  gl_Position = u_viewProj * vec4(a_position, 1.0);\n"
+            "  v_color = a_color;\n"
+            "}\n";
         
-        Model& model = models[modelCount++];
-        memset(&model, 0, sizeof(Model));
+        // Simple fragment shader
+        const char* fs_source =
+            "#version 100\n"
+            "precision mediump float;\n"
+            "varying vec4 v_color;\n"
+            "void main() {\n"
+            "  gl_FragColor = v_color;\n"
+            "}\n";
         
-        float half = size / 2.0f;
-        float vertices[] = {
-            // Front
-            x-half, y-half, z+half,  0, 0, 1,
-            x+half, y-half, z+half,  0, 0, 1,
-            x+half, y+half, z+half,  0, 0, 1,
-            x-half, y+half, z+half,  0, 0, 1,
-            // Back
-            x-half, y-half, z-half,  0, 0,-1,
-            x-half, y+half, z-half,  0, 0,-1,
-            x+half, y+half, z-half,  0, 0,-1,
-            x+half, y-half, z-half,  0, 0,-1,
-            // Top
-            x-half, y+half, z-half,  0, 1, 0,
-            x-half, y+half, z+half,  0, 1, 0,
-            x+half, y+half, z+half,  0, 1, 0,
-            x+half, y+half, z-half,  0, 1, 0,
-            // Bottom
-            x-half, y-half, z-half,  0,-1, 0,
-            x+half, y-half, z-half,  0,-1, 0,
-            x+half, y-half, z+half,  0,-1, 0,
-            x-half, y-half, z+half,  0,-1, 0,
-            // Right
-            x+half, y-half, z-half,  1, 0, 0,
-            x+half, y+half, z-half,  1, 0, 0,
-            x+half, y+half, z+half,  1, 0, 0,
-            x+half, y-half, z+half,  1, 0, 0,
-            // Left
-            x-half, y-half, z-half, -1, 0, 0,
-            x-half, y-half, z+half, -1, 0, 0,
-            x-half, y+half, z+half, -1, 0, 0,
-            x-half, y+half, z-half, -1, 0, 0,
-        };
+        // Compile shaders
+        bgfx::ShaderHandle vs = bgfx::createShader(
+            bgfx::makeRef(vs_source, (uint32_t)strlen(vs_source))
+        );
+        bgfx::ShaderHandle fs = bgfx::createShader(
+            bgfx::makeRef(fs_source, (uint32_t)strlen(fs_source))
+        );
         
-        unsigned int indices[] = {
-            0,1,2, 0,2,3,    4,5,6, 4,6,7,    8,9,10, 8,10,11,
-            12,13,14, 12,14,15,  16,17,18, 16,18,19,  20,21,22, 20,22,23
-        };
+        // Create program
+        program = bgfx::createProgram(vs, fs, true);
         
-        glGenVertexArrays(1, &model.vao);
-        glGenBuffers(1, &model.vbo);
-        glGenBuffers(1, &model.ibo);
+        if (!bgfx::isValid(program)) {
+            emscripten_console_error("Failed to create shader program");
+            return false;
+        }
         
-        glBindVertexArray(model.vao);
+        // Create uniforms
+        u_time = bgfx::createUniform("u_time", bgfx::UniformType::Vec4);
+        u_viewProj = bgfx::createUniform("u_viewProj", bgfx::UniformType::Mat4);
+        u_albedo = bgfx::createUniform("u_albedo", bgfx::UniformType::Vec4);
+        u_metallic = bgfx::createUniform("u_metallic", bgfx::UniformType::Vec4);
+        u_roughness = bgfx::createUniform("u_roughness", bgfx::UniformType::Vec4);
         
-        glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-        
-        model.indexCount = 36;
-        model.transform = Mat4::identity();
-        model.albedo = albedo;
-        model.metallic = metallic;
-        model.roughness = roughness;
-        model.clearcoat = clearcoat;
-        
-        glBindVertexArray(0);
+        return true;
     }
     
-    void createConeModel(float x, float y, float z, float radius, float height, Vec3 albedo, float metallic, float roughness, float clearcoat) {
-        if (modelCount >= MAX_MODELS) return;
+    bool init(int w, int h) {
+        width = w;
+        height = h;
         
-        Model& model = models[modelCount++];
-        memset(&model, 0, sizeof(Model));
+        // Initialize bgfx
+        bgfx::Init init;
+        init.type = bgfx::RendererType::WebGL2;
+        init.resolution.width = width;
+        init.resolution.height = height;
+        init.resolution.reset = BGFX_RESET_VSYNC;
+        init.platformData.nwh = nullptr; // WebGL doesn't need native window handle
         
-        int segments = 32;
-        int vertexCount = (segments + 1) * 2 + 1;
-        int indexCount = segments * 6 + segments * 3;
-        
-        float* vertices = new float[vertexCount * 6];
-        unsigned int* indices = new unsigned int[indexCount];
-        
-        int idx = 0;
-        // Apex
-        vertices[idx++] = x; vertices[idx++] = y + height; vertices[idx++] = z;
-        vertices[idx++] = 0; vertices[idx++] = 1; vertices[idx++] = 0;
-        
-        // Base ring
-        for (int i = 0; i <= segments; i++) {
-            float angle = (float)i / segments * 2.0f * 3.14159265f;
-            float px = x + radius * cosf(angle);
-            float pz = z + radius * sinf(angle);
-            float nx = cosf(angle);
-            float nz = sinf(angle);
-            
-            vertices[idx++] = px;
-            vertices[idx++] = y;
-            vertices[idx++] = pz;
-            vertices[idx++] = nx * 0.707f;
-            vertices[idx++] = -0.707f;
-            vertices[idx++] = nz * 0.707f;
+        if (!bgfx::init(init)) {
+            emscripten_console_error("Failed to initialize bgfx");
+            return false;
         }
         
-        idx = 0;
-        // Side triangles
-        for (int i = 0; i < segments; i++) {
-            indices[idx++] = 0;
-            indices[idx++] = i + 1;
-            indices[idx++] = i + 2;
+        // Initialize vertex layout
+        PosColorVertex::init();
+        
+        // Create shaders
+        if (!initShader()) {
+            return false;
         }
         
-        // Base triangles
-        int baseIdx = segments + 1;
-        for (int i = 0; i < segments; i++) {
-            indices[idx++] = baseIdx;
-            indices[idx++] = baseIdx + i + 1;
-            indices[idx++] = baseIdx + i + 2;
-        }
+        // Create demo scene
+        createDemoScene();
         
-        glGenVertexArrays(1, &model.vao);
-        glGenBuffers(1, &model.vbo);
-        glGenBuffers(1, &model.ibo);
+        // Set debug flags
+        bgfx::setDebug(BGFX_DEBUG_TEXT);
         
-        glBindVertexArray(model.vao);
+        // Set view clear color
+        bgfx::setViewClear(0
+            , BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH
+            , 0xFF1a1a2e  // Dark blue background
+            , 1.0f
+            , 0
+        );
         
-        glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertexCount * 6 * sizeof(float), vertices, GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(unsigned int), indices, GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-        
-        model.indexCount = indexCount;
-        model.transform = Mat4::identity();
-        model.albedo = albedo;
-        model.metallic = metallic;
-        model.roughness = roughness;
-        model.clearcoat = clearcoat;
-        
-        glBindVertexArray(0);
-        
-        delete[] vertices;
-        delete[] indices;
+        emscripten_console_log("Phoenix WASM Demo initialized with bgfx");
+        return true;
     }
     
-    void createCylinderModel(float x, float y, float z, float radius, float height, Vec3 albedo, float metallic, float roughness, float clearcoat) {
-        if (modelCount >= MAX_MODELS) return;
-        
-        Model& model = models[modelCount++];
-        memset(&model, 0, sizeof(Model));
-        
-        int segments = 32;
-        int vertexCount = (segments + 1) * 3;
-        int indexCount = segments * 18;
-        
-        float* vertices = new float[vertexCount * 6];
-        unsigned int* indices = new unsigned int[indexCount];
-        
-        int idx = 0;
-        float halfH = height / 2.0f;
-        
-        // Top ring
-        for (int i = 0; i <= segments; i++) {
-            float angle = (float)i / segments * 2.0f * 3.14159265f;
-            float px = x + radius * cosf(angle);
-            float pz = z + radius * sinf(angle);
-            
-            vertices[idx++] = px;
-            vertices[idx++] = y + halfH;
-            vertices[idx++] = pz;
-            vertices[idx++] = 0;
-            vertices[idx++] = 1;
-            vertices[idx++] = 0;
+    void shutdown() {
+        // Destroy models
+        for (int i = 0; i < modelCount; i++) {
+            bgfx::destroy(models[i].ibh);
+            bgfx::destroy(models[i].vbh);
         }
         
-        // Bottom ring
-        for (int i = 0; i <= segments; i++) {
-            float angle = (float)i / segments * 2.0f * 3.14159265f;
-            float px = x + radius * cosf(angle);
-            float pz = z + radius * sinf(angle);
-            
-            vertices[idx++] = px;
-            vertices[idx++] = y - halfH;
-            vertices[idx++] = pz;
-            vertices[idx++] = 0;
-            vertices[idx++] = -1;
-            vertices[idx++] = 0;
+        // Destroy program and uniforms
+        if (bgfx::isValid(program)) {
+            bgfx::destroy(program);
         }
+        bgfx::destroy(u_time);
+        bgfx::destroy(u_viewProj);
+        bgfx::destroy(u_albedo);
+        bgfx::destroy(u_metallic);
+        bgfx::destroy(u_roughness);
         
-        // Side ring
-        for (int i = 0; i <= segments; i++) {
-            float angle = (float)i / segments * 2.0f * 3.14159265f;
-            float nx = cosf(angle);
-            float nz = sinf(angle);
-            
-            // Top vertex
-            vertices[idx++] = x + radius * nx;
-            vertices[idx++] = y + halfH;
-            vertices[idx++] = z + radius * nz;
-            vertices[idx++] = nx;
-            vertices[idx++] = 0;
-            vertices[idx++] = nz;
-            
-            // Bottom vertex
-            vertices[idx++] = x + radius * nx;
-            vertices[idx++] = y - halfH;
-            vertices[idx++] = z + radius * nz;
-            vertices[idx++] = nx;
-            vertices[idx++] = 0;
-            vertices[idx++] = nz;
-        }
+        // Shutdown bgfx
+        bgfx::shutdown();
         
-        idx = 0;
-        // Top cap
-        for (int i = 0; i < segments; i++) {
-            indices[idx++] = 0;
-            indices[idx++] = i + 2;
-            indices[idx++] = i + 1;
-        }
-        
-        // Bottom cap
-        int baseOffset = segments + 1;
-        for (int i = 0; i < segments; i++) {
-            indices[idx++] = baseOffset + 0;
-            indices[idx++] = baseOffset + i + 1;
-            indices[idx++] = baseOffset + i + 2;
-        }
-        
-        // Side
-        int sideOffset = baseOffset * 2;
-        for (int i = 0; i < segments; i++) {
-            int i0 = sideOffset + i * 2;
-            int i1 = sideOffset + i * 2 + 1;
-            int i2 = sideOffset + (i + 1) * 2 + 1;
-            int i3 = sideOffset + (i + 1) * 2;
-            
-            indices[idx++] = i0;
-            indices[idx++] = i1;
-            indices[idx++] = i2;
-            indices[idx++] = i0;
-            indices[idx++] = i2;
-            indices[idx++] = i3;
-        }
-        
-        glGenVertexArrays(1, &model.vao);
-        glGenBuffers(1, &model.vbo);
-        glGenBuffers(1, &model.ibo);
-        
-        glBindVertexArray(model.vao);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertexCount * 6 * sizeof(float), vertices, GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(unsigned int), indices, GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-        
-        model.indexCount = indexCount;
-        model.transform = Mat4::identity();
-        model.albedo = albedo;
-        model.metallic = metallic;
-        model.roughness = roughness;
-        model.clearcoat = clearcoat;
-        
-        glBindVertexArray(0);
-        
-        delete[] vertices;
-        delete[] indices;
-    }
-    
-    void spawnParticle(Vec3 pos, Vec3 vel) {
-        for (int i = 0; i < MAX_PARTICLES; i++) {
-            if (!particles[i].active) {
-                particles[i].position = pos;
-                particles[i].velocity = vel;
-                particles[i].life = 0;
-                particles[i].maxLife = 1.0f + (rand() % 100) / 100.0f;
-                particles[i].active = true;
-                return;
-            }
-        }
-    }
-    
-    void updateParticles(float dt) {
-        for (int i = 0; i < MAX_PARTICLES; i++) {
-            if (particles[i].active) {
-                particles[i].life += dt / particles[i].maxLife;
-                particles[i].position.x += particles[i].velocity.x * dt;
-                particles[i].position.y += particles[i].velocity.y * dt;
-                particles[i].position.z += particles[i].velocity.z * dt;
-                particles[i].velocity.y += 2.0f * dt; // Gravity
-                
-                if (particles[i].life >= 1.0f) {
-                    particles[i].active = false;
-                }
-            }
-        }
-        
-        // Spawn new particles if enabled
-        static float spawnTimer = 0;
-        spawnTimer += dt;
-        
-        if (spawnTimer >= 0.05f) {
-            spawnTimer = 0;
-            // Fire particles
-            for (int i = 0; i < 5; i++) {
-                spawnParticle(
-                    Vec3((rand() % 100 - 50) / 100.0f, 0, (rand() % 100 - 50) / 100.0f),
-                    Vec3((rand() % 100 - 50) / 500.0f, 3.0f + (rand() % 100) / 50.0f, (rand() % 100 - 50) / 500.0f)
-                );
-            }
-        }
+        emscripten_console_log("Phoenix WASM Demo shutdown complete");
     }
     
     void update(float dt) {
@@ -1139,7 +574,7 @@ public:
         // Update camera
         updateCameraPosition();
         
-        // Update particles
+        // Update particles (simple simulation)
         updateParticles(dt);
         
         // Rotate models slightly for demo
@@ -1157,86 +592,91 @@ public:
             fpsTimer = 0;
             
             // Report to JS
-            emscripten_run_script_string(("window.phoenixLoader && window.phoenixLoader.fps = " + std::to_string((int)fps)).c_str());
+            char script[256];
+            sprintf(script, "if(window.phoenixLoader){window.phoenixLoader.fps=%d;}", (int)fps);
+            emscripten_run_script_string(script);
+        }
+    }
+    
+    void updateParticles(float dt) {
+        // Simple particle simulation
+        for (int i = 0; i < MAX_PARTICLES; i++) {
+            if (particles[i].active) {
+                particles[i].life += dt / particles[i].maxLife;
+                particles[i].position = particles[i].position + particles[i].velocity * dt;
+                particles[i].velocity.y += 2.0f * dt; // Gravity
+                
+                if (particles[i].life >= 1.0f) {
+                    particles[i].active = false;
+                }
+            }
+        }
+        
+        // Spawn new particles
+        static float spawnTimer = 0;
+        spawnTimer += dt;
+        
+        if (spawnTimer >= 0.05f) {
+            spawnTimer = 0;
+            for (int i = 0; i < MAX_PARTICLES; i++) {
+                if (!particles[i].active) {
+                    particles[i].position = Vec3(
+                        (rand() % 100 - 50) / 100.0f,
+                        0,
+                        (rand() % 100 - 50) / 100.0f
+                    );
+                    particles[i].velocity = Vec3(
+                        (rand() % 100 - 50) / 500.0f,
+                        3.0f + (rand() % 100) / 50.0f,
+                        (rand() % 100 - 50) / 500.0f
+                    );
+                    particles[i].life = 0;
+                    particles[i].maxLife = 1.0f + (rand() % 100) / 100.0f;
+                    particles[i].active = true;
+                    break;
+                }
+            }
         }
     }
     
     void render() {
-        glViewport(0, 0, width, height);
-        glClearColor(0.1f, 0.1f, 0.18f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // Set viewport
+        bgfx::setViewRect(0, 0, 0, uint16_t(width), uint16_t(height));
         
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-        
-        drawCalls = 0;
-        triangleCount = 0;
+        // Touch frame
+        bgfx::touch(0);
         
         // Create matrices
         Mat4 projection = Mat4::perspective(3.14159265f / 4.0f, (float)width / height, 0.1f, 100.0f);
         Mat4 view = Mat4::lookAt(camera.position, camera.target, camera.up);
+        Mat4 viewProj = Mat4::multiply(projection, view);
         
-        // Draw skybox
-        glUseProgram(skyboxProgram);
-        glUniformMatrix4fv(glGetUniformLocation(skyboxProgram, "uView"), 1, GL_FALSE, view.m);
-        glUniformMatrix4fv(glGetUniformLocation(skyboxProgram, "uProjection"), 1, GL_FALSE, projection.m);
+        // Update uniforms
+        float timeVec[4] = { time, 0, 0, 0 };
+        bgfx::setUniform(u_time, timeVec);
+        bgfx::setUniform(u_viewProj, viewProj.m);
         
-        glBindVertexArray(skyboxVAO);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        drawCalls++;
-        glBindVertexArray(0);
+        drawCalls = 0;
+        triangleCount = 0;
         
-        // Draw models
-        glUseProgram(shaderProgram);
-        
-        GLint uModel = glGetUniformLocation(shaderProgram, "uModel");
-        GLint uView = glGetUniformLocation(shaderProgram, "uView");
-        GLint uProjection = glGetUniformLocation(shaderProgram, "uProjection");
-        GLint uAlbedo = glGetUniformLocation(shaderProgram, "uAlbedo");
-        GLint uMetallic = glGetUniformLocation(shaderProgram, "uMetallic");
-        GLint uRoughness = glGetUniformLocation(shaderProgram, "uRoughness");
-        GLint uViewPos = glGetUniformLocation(shaderProgram, "uViewPos");
-        GLint uLightDir = glGetUniformLocation(shaderProgram, "uLightDir");
-        GLint uLightColor = glGetUniformLocation(shaderProgram, "uLightColor");
-        
-        glUniformMatrix4fv(uView, 1, GL_FALSE, view.m);
-        glUniformMatrix4fv(uProjection, 1, GL_FALSE, projection.m);
-        glUniform3f(uViewPos, camera.position.x, camera.position.y, camera.position.z);
-        glUniform3f(uLightDir, lights[0].position.x, lights[0].position.y, lights[0].position.z);
-        glUniform3f(uLightColor, lights[0].color.x, lights[0].color.y, lights[0].color.z);
-        
+        // Render models
         for (int i = 0; i < modelCount; i++) {
             Model& m = models[i];
             
-            glUniformMatrix4fv(uModel, 1, GL_FALSE, m.transform.m);
-            glUniform3f(uAlbedo, m.albedo.x, m.albedo.y, m.albedo.z);
-            glUniform1f(uMetallic, m.metallic);
-            glUniform1f(uRoughness, m.roughness);
+            float albedoVec[4] = { m.albedo.x, m.albedo.y, m.albedo.z, 1.0f };
+            float metallicVec[4] = { m.metallic, 0, 0, 0 };
+            float roughnessVec[4] = { m.roughness, 0, 0, 0 };
             
-            glBindVertexArray(m.vao);
-            glDrawElements(GL_TRIANGLES, m.indexCount, GL_UNSIGNED_INT, 0);
+            bgfx::setUniform(u_albedo, albedoVec);
+            bgfx::setUniform(u_metallic, metallicVec);
+            bgfx::setUniform(u_roughness, roughnessVec);
+            
+            bgfx::setVertexBuffer(0, m.vbh);
+            bgfx::setIndexBuffer(m.ibh);
+            bgfx::submit(0, program);
+            
             drawCalls++;
             triangleCount += m.indexCount / 3;
-            glBindVertexArray(0);
-        }
-        
-        // Draw particles
-        if (particleCount > 0) {
-            glUseProgram(particleProgram);
-            GLint pView = glGetUniformLocation(particleProgram, "uView");
-            GLint pProjection = glGetUniformLocation(particleProgram, "uProjection");
-            GLint pTime = glGetUniformLocation(particleProgram, "uTime");
-            
-            glUniformMatrix4fv(pView, 1, GL_FALSE, view.m);
-            glUniformMatrix4fv(pProjection, 1, GL_FALSE, projection.m);
-            glUniform1f(pTime, time);
-            
-            glBindVertexArray(particleVAO);
-            glDrawArrays(GL_POINTS, 0, particleCount);
-            drawCalls++;
         }
         
         // Update JS performance display
@@ -1249,32 +689,11 @@ public:
             emscripten_run_script_string(script);
         }
     }
-
-public:
-    void init(int w, int h) {
-        width = w;
-        height = h;
-        
-        // Create shaders
-        shaderProgram = createProgram(vertexShaderSource, fragmentShaderSource);
-        skyboxProgram = createProgram(skyboxVertexSource, skyboxFragmentSource);
-        particleProgram = createProgram(particleVertexSource, particleFragmentSource);
-        
-        // Create geometry
-        createSkybox();
-        createParticleBuffer();
-        createDemoModels();
-        
-        // OpenGL settings
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    }
     
     void onResize(int w, int h) {
         width = w;
         height = h;
+        bgfx::reset(uint32_t(width), uint32_t(height), BGFX_RESET_VSYNC);
     }
     
     void onTouchRotate(float dx, float dy) {
@@ -1319,14 +738,14 @@ public:
     }
     
     void setEffect(int effect, int enabled) {
+        // For now, just log - full implementation would update shader uniforms
         switch (effect) {
             case 0: lights[0].intensity = enabled ? 1.0f : 0.0f; break;
             case 1: lights[1].intensity = enabled ? 0.8f : 0.0f; break;
-            case 2: lights[3].intensity = enabled ? 0.5f : 0.0f; break;
+            case 2: lights[2].intensity = enabled ? 0.6f : 0.0f; break;
             case 3: shadowsEnabled = enabled; break;
             case 4: bloomEnabled = enabled; break;
             case 5: toneMappingEnabled = enabled; break;
-            case 6: ssaoEnabled = enabled; break;
         }
     }
     
@@ -1338,72 +757,122 @@ public:
 // ============================================================================
 // Global Instance
 // ============================================================================
-static PhoenixDemo* g_demo = nullptr;
+static PhoenixWasmDemo* g_demo = nullptr;
 
 // ============================================================================
-// Exported Functions
+// Exported Functions (C interface for WASM)
 // ============================================================================
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE
-void init_gl(int width, int height) {
-    g_demo = new PhoenixDemo();
-    g_demo->init(width, height);
+int demo_init(int width, int height) {
+    if (g_demo) {
+        return -1; // Already initialized
+    }
+    
+    g_demo = new PhoenixWasmDemo();
+    if (!g_demo->init(width, height)) {
+        delete g_demo;
+        g_demo = nullptr;
+        return -2; // Initialization failed
+    }
+    
+    return 0; // Success
 }
 
 EMSCRIPTEN_KEEPALIVE
-void update(float dt) {
-    if (g_demo) g_demo->update(dt);
+void demo_update(float dt) {
+    if (g_demo) {
+        g_demo->update(dt);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void render() {
-    if (g_demo) g_demo->render();
+void demo_render() {
+    if (g_demo) {
+        g_demo->render();
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void on_resize(int width, int height) {
-    if (g_demo) g_demo->onResize(width, height);
+void demo_shutdown() {
+    if (g_demo) {
+        g_demo->shutdown();
+        delete g_demo;
+        g_demo = nullptr;
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void on_touch_rotate(float dx, float dy) {
-    if (g_demo) g_demo->onTouchRotate(dx, dy);
+void demo_resize(int width, int height) {
+    if (g_demo) {
+        g_demo->onResize(width, height);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void on_touch_zoom(float delta) {
-    if (g_demo) g_demo->onTouchZoom(delta);
+void demo_touch_rotate(float dx, float dy) {
+    if (g_demo) {
+        g_demo->onTouchRotate(dx, dy);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void on_touch_pan(float dx, float dy) {
-    if (g_demo) g_demo->onTouchPan(dx, dy);
+void demo_touch_zoom(float delta) {
+    if (g_demo) {
+        g_demo->onTouchZoom(delta);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void on_double_tap() {
-    if (g_demo) g_demo->onDoubleTap();
+void demo_touch_pan(float dx, float dy) {
+    if (g_demo) {
+        g_demo->onTouchPan(dx, deltaY);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void set_camera_mode(int mode) {
-    if (g_demo) g_demo->setCameraMode(mode);
+void demo_double_tap() {
+    if (g_demo) {
+        g_demo->onDoubleTap();
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void set_material_param(int param, float value) {
-    if (g_demo) g_demo->setMaterialParam(param, value);
+void demo_set_camera_mode(int mode) {
+    if (g_demo) {
+        g_demo->setCameraMode(mode);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void set_effect(int effect, int enabled) {
-    if (g_demo) g_demo->setEffect(effect, enabled);
+void demo_set_material_param(int param, float value) {
+    if (g_demo) {
+        g_demo->setMaterialParam(param, value);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void set_animation(int anim) {
-    if (g_demo) g_demo->setAnimation(anim);
+void demo_set_effect(int effect, int enabled) {
+    if (g_demo) {
+        g_demo->setEffect(effect, enabled);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void demo_set_animation(int anim) {
+    if (g_demo) {
+        g_demo->setAnimation(anim);
+    }
 }
 
 } // extern "C"
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+int main() {
+    emscripten_console_log("Phoenix WASM Demo starting...");
+    // Initialization happens via demo_init() export
+    return 0;
+}
